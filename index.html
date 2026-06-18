@@ -140,6 +140,7 @@ async function storageSet(key, value) {
 // ---------- Main App ----------
 function FieldSurveyApp() {
   const [view, setView] = useState("projects"); // projects, projectSetup, capture, waypointList, map, export, waypointEdit
+  const [monitoring, setMonitoring] = useState(true);
   const [projects, setProjects] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
   const [loaded, setLoaded] = useState(false);
@@ -191,6 +192,8 @@ function FieldSurveyApp() {
           updateProject={(patch) => updateProject(activeProject.id, patch)}
           onBack={() => setView("projects")}
           onNav={setView}
+          monitoring={monitoring}
+          setMonitoring={setMonitoring}
         />
       )}
       {view === "waypointList" && activeProject && (
@@ -244,7 +247,10 @@ function TopBar({ title, onBack, right }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        padding: "14px 16px",
+        paddingTop: "calc(env(safe-area-inset-top, 0px) + 18px)",
+        paddingBottom: "14px",
+        paddingLeft: "16px",
+        paddingRight: "16px",
         background: COLORS.ink,
         color: COLORS.card,
         position: "sticky",
@@ -511,10 +517,9 @@ const inputStyle = {
 };
 
 // ---------- Capture Screen (main hub for a project) ----------
-function CaptureScreen({ project, updateProject, onBack, onNav }) {
+function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setMonitoring }) {
   const [gettingLoc, setGettingLoc] = useState(false);
   const [pendingWaypoint, setPendingWaypoint] = useState(null); // {lat, lon, locationNum}
-  const [monitoring, setMonitoring] = useState(true);
   const [proximityAlert, setProximityAlert] = useState(null); // waypoint object
   const watchIdRef = useRef(null);
   const alertedRecentlyRef = useRef({}); // id -> timestamp to debounce repeated dings
@@ -651,12 +656,19 @@ function CaptureScreen({ project, updateProject, onBack, onNav }) {
             Waypoints ({project.waypoints.length})
           </SecondaryButton>
           <SecondaryButton onClick={() => onNav("map")} icon={<MapIcon size={18} />}>
-            Map
+            Relative Point Map
           </SecondaryButton>
         </div>
         <PrimaryButton onClick={() => onNav("export")} icon={<Download size={18} />} style={{ background: COLORS.ink, boxShadow: "0 2px 0 #182019" }}>
           Export Data
         </PrimaryButton>
+        <SecondaryButton
+          onClick={onBack}
+          icon={<X size={18} />}
+          style={{ borderColor: COLORS.rust, color: COLORS.rust }}
+        >
+          Conclude Session &amp; Return to Projects
+        </SecondaryButton>
       </div>
 
       {pendingWaypoint && (
@@ -1231,7 +1243,7 @@ function MapScreen({ project, onBack }) {
   if (waypoints.length === 0) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-        <TopBar title="Map" onBack={onBack} />
+        <TopBar title="Relative Point Map" onBack={onBack} />
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.inkSoft }}>
           No waypoints to show yet.
         </div>
@@ -1257,7 +1269,7 @@ function MapScreen({ project, onBack }) {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <TopBar title="Map" onBack={onBack} />
+      <TopBar title="Relative Point Map" onBack={onBack} />
       <div style={{ flex: 1, position: "relative", background: "#D8CDA8", overflow: "hidden" }}>
         <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
           <defs>
@@ -1681,6 +1693,54 @@ ${placemarks}
     setBusy(null);
   }
 
+  async function exportKMZ() {
+    setBusy("kmz");
+    try {
+      await ensureJSZip();
+      const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+      const placemarks = sorted
+        .map((wp) => {
+          const extData = project.customFields
+            .map((f) => {
+              const val = (wp.customValues && wp.customValues[f.id]) || "";
+              return `<Data name="${escapeXml(f.label)}"><value>${escapeXml(val)}</value></Data>`;
+            })
+            .join("");
+          return `<Placemark>
+  <name>Location ${pad3(wp.locationNum)}</name>
+  <description>${escapeXml(wp.description || "")}</description>
+  <ExtendedData>
+    <Data name="PhotoFileName"><value>${escapeXml(wp.photoFileName || "")}</value></Data>
+    ${extData}
+  </ExtendedData>
+  <Point><coordinates>${wp.lon},${wp.lat},0</coordinates></Point>
+</Placemark>`;
+        })
+        .join("\n");
+      const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>${escapeXml(project.name)}</name>
+${placemarks}
+</Document>
+</kml>`;
+      const zip = new window.JSZip();
+      zip.file("doc.kml", kml);
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${project.name.replace(/\s+/g, "_")}.kmz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      alert("KMZ export failed: " + e.message);
+    }
+    setBusy(null);
+  }
+
   async function exportPDF() {
     setBusy("pdf");
     try {
@@ -1818,8 +1878,15 @@ ${placemarks}
           onClick={exportKML}
           busy={busy === "kml"}
         />
+        <ExportRow
+          icon={<MapIcon size={20} />}
+          title="KMZ"
+          subtitle="Compressed KML, shareable single file"
+          onClick={exportKMZ}
+          busy={busy === "kmz"}
+        />
         <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700, marginTop: 12 }}>
-          DOCUMENTS & PHOTOS
+          DOCUMENTS &amp; PHOTOS
         </div>
         <ExportRow
           icon={<FileText size={20} />}
