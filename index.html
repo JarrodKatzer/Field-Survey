@@ -366,6 +366,7 @@ function SecondaryButton({ children, onClick, style, icon }) {
 function ProjectsScreen({ projects, setProjects, onOpen }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // project id to delete
 
   function createProject() {
     if (!name.trim()) return;
@@ -376,7 +377,7 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
       nextLocationNum: 1,
       proximityThresholdFeet: 30,
       customFields: [], // {id, label, type: 'text'|'dropdown', options: []}
-      waypoints: [], // {id, locationNum, description, lat, lon, photoFileName, photoData, customValues: {fieldId: value}, createdAt}
+      waypoints: [], // {id, locationNum, description, lat, lon, photoFileName, photoCapturedAt, customValues: {fieldId: value}, createdAt}
     };
     setProjects((prev) => [...prev, p]);
     setName("");
@@ -386,6 +387,7 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
 
   function deleteProject(id) {
     setProjects((prev) => prev.filter((p) => p.id !== id));
+    setConfirmDelete(null);
   }
 
   return (
@@ -432,7 +434,7 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
                 </div>
               </div>
               <button
-                onClick={() => deleteProject(p.id)}
+                onClick={() => setConfirmDelete(p.id)}
                 aria-label="Delete project"
                 style={{ background: "none", border: "none", color: COLORS.rust, padding: 8 }}
               >
@@ -492,6 +494,14 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
           </button>
         )}
       </div>
+      {confirmDelete && (
+        <ConfirmDialog
+          message={`This will permanently delete the project and all its waypoints. This cannot be undone.`}
+          confirmLabel="Delete Project"
+          onConfirm={() => deleteProject(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -702,40 +712,22 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
     project.customFields.forEach((f) => (init[f.id] = ""));
     return init;
   });
-  const [photoData, setPhotoData] = useState(null);
   const [photoFileName, setPhotoFileName] = useState(null);
+  const [photoCapturedAt, setPhotoCapturedAt] = useState(null);
+  const [confirmClearPhoto, setConfirmClearPhoto] = useState(false);
   const fileInputRef = useRef(null);
 
   function handlePhoto(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      // downscale for storage efficiency
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const maxDim = 1200;
-        let { width, height } = img;
-        if (width > height && width > maxDim) {
-          height = (height * maxDim) / width;
-          width = maxDim;
-        } else if (height > maxDim) {
-          width = (width * maxDim) / height;
-          height = maxDim;
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
-        setPhotoData(dataUrl);
-        const fname = `LOC_${pad3(waypoint.locationNum)}_${project.name.replace(/\s+/g, "_")}.jpg`;
-        setPhotoFileName(fname);
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+    // Record the filename the browser exposes and the capture timestamp.
+    // The photo is saved to Camera Roll by iOS automatically — we do not store image data.
+    const capturedAt = new Date().toISOString();
+    const fname = file.name || `LOC_${pad3(waypoint.locationNum)}_${capturedAt.slice(0,10)}.jpg`;
+    setPhotoFileName(fname);
+    setPhotoCapturedAt(capturedAt);
+    // Reset the input so the same file can be re-selected if needed
+    e.target.value = "";
   }
 
   function handleSave() {
@@ -744,8 +736,8 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
       description,
       lat: waypoint.lat,
       lon: waypoint.lon,
-      photoData,
       photoFileName,
+      photoCapturedAt,
       customValues,
     });
   }
@@ -799,30 +791,31 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
 
           <div style={{ marginTop: 16 }}>
             <label style={labelStyle}>Photo</label>
-            {photoData ? (
-              <div style={{ position: "relative" }}>
-                <img
-                  src={photoData}
-                  alt="waypoint"
-                  style={{ width: "100%", borderRadius: 10, border: `1.5px solid ${COLORS.line}` }}
-                />
+            {photoFileName ? (
+              <div
+                style={{
+                  background: "#fff",
+                  border: `1.5px solid ${COLORS.line}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{photoFileName}</div>
+                  <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
+                    Saved to Camera Roll · {photoCapturedAt ? new Date(photoCapturedAt).toLocaleTimeString() : ""}
+                  </div>
+                </div>
                 <button
-                  onClick={() => {
-                    setPhotoData(null);
-                    setPhotoFileName(null);
-                  }}
-                  style={{
-                    position: "absolute",
-                    top: 8,
-                    right: 8,
-                    background: "rgba(43,58,47,0.85)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 8,
-                    padding: 8,
-                  }}
+                  onClick={() => setConfirmClearPhoto(true)}
+                  style={{ background: "none", border: "none", color: COLORS.rust, padding: 6, flexShrink: 0 }}
+                  aria-label="Remove photo record"
                 >
-                  <X size={16} />
+                  <X size={18} />
                 </button>
               </div>
             ) : (
@@ -843,6 +836,9 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
               >
                 <Camera size={28} />
                 <span style={{ fontWeight: 600, fontSize: 14 }}>Take Photo</span>
+                <span style={{ fontSize: 12, color: COLORS.inkSoft, textAlign: "center" }}>
+                  Photo saves to your Camera Roll. Filename recorded here for reference.
+                </span>
               </button>
             )}
             <input
@@ -854,6 +850,14 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
               style={{ display: "none" }}
             />
           </div>
+          {confirmClearPhoto && (
+            <ConfirmDialog
+              message="This will remove the photo filename record from this waypoint. The photo in your Camera Roll will not be affected."
+              confirmLabel="Remove Record"
+              onConfirm={() => { setPhotoFileName(null); setPhotoCapturedAt(null); setConfirmClearPhoto(false); }}
+              onCancel={() => setConfirmClearPhoto(false)}
+            />
+          )}
         </div>
 
         <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
@@ -926,6 +930,65 @@ const modalCardStyle = {
   maxWidth: 600,
 };
 
+// ---------- Confirm Dialog ----------
+function ConfirmDialog({ message, confirmLabel = "Delete", onConfirm, onCancel }) {
+  return (
+    <div style={{ ...modalOverlayStyleBase(), alignItems: "center" }}>
+      <div
+        style={{
+          background: COLORS.card,
+          borderRadius: 16,
+          padding: 24,
+          width: "85%",
+          maxWidth: 360,
+          textAlign: "center",
+          border: `3px solid ${COLORS.rust}`,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
+        }}
+      >
+        <div style={{ fontWeight: 800, fontSize: 17, color: COLORS.ink, marginBottom: 10 }}>
+          Are you sure?
+        </div>
+        <div style={{ fontSize: 15, color: COLORS.inkSoft, marginBottom: 20, lineHeight: 1.5 }}>
+          {message}
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              flex: 1,
+              background: COLORS.card,
+              border: `2px solid ${COLORS.ink}`,
+              color: COLORS.ink,
+              borderRadius: 10,
+              padding: "12px",
+              fontWeight: 700,
+              fontSize: 15,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            style={{
+              flex: 1,
+              background: COLORS.rust,
+              border: `2px solid ${COLORS.rustDark}`,
+              color: "#fff",
+              borderRadius: 10,
+              padding: "12px",
+              fontWeight: 700,
+              fontSize: 15,
+            }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Proximity Alert Modal ----------
 function ProximityAlertModal({ waypoint, onYes, onNo }) {
   return (
@@ -987,9 +1050,11 @@ function ProximityAlertModal({ waypoint, onYes, onNo }) {
 // ---------- Waypoint List / Edit Screen ----------
 function WaypointListScreen({ project, updateProject, onBack, onNav }) {
   const [editingWp, setEditingWp] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null); // waypoint id to delete
 
   function deleteWaypoint(id) {
     updateProject({ waypoints: project.waypoints.filter((w) => w.id !== id) });
+    setConfirmDelete(null);
   }
 
   function saveEdit(updated) {
@@ -1023,29 +1088,24 @@ function WaypointListScreen({ project, updateProject, onBack, onNav }) {
                   border: `1px solid ${COLORS.line}`,
                 }}
               >
-                {wp.photoData ? (
-                  <img
-                    src={wp.photoData}
-                    alt=""
-                    style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
-                  />
-                ) : (
-                  <div
-                    style={{
-                      width: 56,
-                      height: 56,
-                      borderRadius: 8,
-                      background: COLORS.bg,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                      color: COLORS.inkSoft,
-                    }}
-                  >
-                    <ImageIcon size={22} />
-                  </div>
-                )}
+                <div
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 8,
+                    background: wp.photoFileName ? "#DCE8D5" : COLORS.bg,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    color: wp.photoFileName ? "#3A5C2E" : COLORS.inkSoft,
+                    gap: 2,
+                  }}
+                >
+                  <Camera size={18} />
+                  <span style={{ fontSize: 9, fontWeight: 700 }}>{wp.photoFileName ? "LOGGED" : "NONE"}</span>
+                </div>
                 <div style={{ flex: 1, minWidth: 0 }} onClick={() => setEditingWp(wp)}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <LocationBadge num={pad3(wp.locationNum)} size={26} />
@@ -1065,7 +1125,7 @@ function WaypointListScreen({ project, updateProject, onBack, onNav }) {
                     <Edit3 size={18} />
                   </button>
                   <button
-                    onClick={() => deleteWaypoint(wp.id)}
+                    onClick={() => setConfirmDelete(wp.id)}
                     style={{ background: "none", border: "none", color: COLORS.rust, padding: 6 }}
                   >
                     <Trash2 size={18} />
@@ -1084,6 +1144,14 @@ function WaypointListScreen({ project, updateProject, onBack, onNav }) {
           onCancel={() => setEditingWp(null)}
         />
       )}
+      {confirmDelete && (
+        <ConfirmDialog
+          message="This will permanently delete this waypoint and cannot be undone."
+          confirmLabel="Delete Waypoint"
+          onConfirm={() => deleteWaypoint(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
     </div>
   );
 }
@@ -1091,37 +1159,19 @@ function WaypointListScreen({ project, updateProject, onBack, onNav }) {
 function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
   const [description, setDescription] = useState(waypoint.description || "");
   const [customValues, setCustomValues] = useState(waypoint.customValues || {});
-  const [photoData, setPhotoData] = useState(waypoint.photoData || null);
   const [photoFileName, setPhotoFileName] = useState(waypoint.photoFileName || null);
+  const [photoCapturedAt, setPhotoCapturedAt] = useState(waypoint.photoCapturedAt || null);
+  const [confirmClearPhoto, setConfirmClearPhoto] = useState(false);
   const fileInputRef = useRef(null);
 
   function handlePhoto(e) {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const maxDim = 1200;
-        let { width, height } = img;
-        if (width > height && width > maxDim) {
-          height = (height * maxDim) / width;
-          width = maxDim;
-        } else if (height > maxDim) {
-          width = (width * maxDim) / height;
-          height = maxDim;
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        ctx.drawImage(img, 0, 0, width, height);
-        setPhotoData(canvas.toDataURL("image/jpeg", 0.75));
-        setPhotoFileName(`LOC_${pad3(waypoint.locationNum)}_${project.name.replace(/\s+/g, "_")}.jpg`);
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
+    const capturedAt = new Date().toISOString();
+    const fname = file.name || `LOC_${pad3(waypoint.locationNum)}_${capturedAt.slice(0,10)}.jpg`;
+    setPhotoFileName(fname);
+    setPhotoCapturedAt(capturedAt);
+    e.target.value = "";
   }
 
   return (
@@ -1166,26 +1216,31 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
           ))}
           <div style={{ marginTop: 16 }}>
             <label style={labelStyle}>Photo</label>
-            {photoData ? (
-              <div style={{ position: "relative" }}>
-                <img src={photoData} alt="" style={{ width: "100%", borderRadius: 10 }} />
+            {photoFileName ? (
+              <div
+                style={{
+                  background: "#fff",
+                  border: `1.5px solid ${COLORS.line}`,
+                  borderRadius: 10,
+                  padding: "14px 16px",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink }}>{photoFileName}</div>
+                  <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 2 }}>
+                    Saved to Camera Roll · {photoCapturedAt ? new Date(photoCapturedAt).toLocaleTimeString() : ""}
+                  </div>
+                </div>
                 <button
-                  onClick={() => {
-                    setPhotoData(null);
-                    setPhotoFileName(null);
-                  }}
-                  style={{
-                    position: "absolute",
-                    top: 8,
-                    right: 8,
-                    background: "rgba(43,58,47,0.85)",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 8,
-                    padding: 8,
-                  }}
+                  onClick={() => setConfirmClearPhoto(true)}
+                  style={{ background: "none", border: "none", color: COLORS.rust, padding: 6, flexShrink: 0 }}
+                  aria-label="Remove photo record"
                 >
-                  <X size={16} />
+                  <X size={18} />
                 </button>
               </div>
             ) : (
@@ -1206,6 +1261,9 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
               >
                 <Camera size={28} />
                 <span style={{ fontWeight: 600, fontSize: 14 }}>Take Photo</span>
+                <span style={{ fontSize: 12, color: COLORS.inkSoft, textAlign: "center" }}>
+                  Photo saves to your Camera Roll. Filename recorded here for reference.
+                </span>
               </button>
             )}
             <input
@@ -1217,6 +1275,14 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
               style={{ display: "none" }}
             />
           </div>
+          {confirmClearPhoto && (
+            <ConfirmDialog
+              message="This will remove the photo filename record from this waypoint. The photo in your Camera Roll will not be affected."
+              confirmLabel="Remove Record"
+              onConfirm={() => { setPhotoFileName(null); setPhotoCapturedAt(null); setConfirmClearPhoto(false); }}
+              onCancel={() => setConfirmClearPhoto(false)}
+            />
+          )}
         </div>
         <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
           <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>
@@ -1224,7 +1290,7 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
           </SecondaryButton>
           <PrimaryButton
             onClick={() =>
-              onSave({ ...waypoint, description, customValues, photoData, photoFileName })
+              onSave({ ...waypoint, description, customValues, photoFileName, photoCapturedAt })
             }
             style={{ flex: 1 }}
             icon={<Check size={18} />}
@@ -1759,20 +1825,17 @@ ${placemarks}
         const photoW = 200, photoH = slotH - 20;
         const photoX = margin, photoY = top + 10;
 
-        if (wp.photoData) {
-          try {
-            doc.addImage(wp.photoData, "JPEG", photoX, photoY, photoW, Math.min(photoH, photoW), undefined, "FAST");
-          } catch (e) {
-            doc.setDrawColor(180);
-            doc.rect(photoX, photoY, photoW, photoH);
-            doc.text("Image error", photoX + 10, photoY + photoH / 2);
-          }
+        doc.setDrawColor(180);
+        doc.setFillColor(245, 242, 235);
+        doc.rect(photoX, photoY, photoW, photoH, "FD");
+        doc.setFontSize(11);
+        doc.setTextColor(120);
+        if (wp.photoFileName) {
+          doc.text("Photo on file:", photoX + photoW / 2, photoY + photoH / 2 - 10, { align: "center" });
+          doc.setFontSize(9);
+          const fnLines = doc.splitTextToSize(wp.photoFileName, photoW - 10);
+          doc.text(fnLines, photoX + photoW / 2, photoY + photoH / 2 + 4, { align: "center" });
         } else {
-          doc.setDrawColor(180);
-          doc.setFillColor(245, 242, 235);
-          doc.rect(photoX, photoY, photoW, photoH, "FD");
-          doc.setFontSize(11);
-          doc.setTextColor(120);
           doc.text("No photo taken", photoX + photoW / 2, photoY + photoH / 2, { align: "center" });
         }
 
@@ -1822,36 +1885,6 @@ ${placemarks}
     setBusy(null);
   }
 
-  async function exportPhotosZip() {
-    setBusy("zip");
-    try {
-      await ensureJSZip();
-      const zip = new window.JSZip();
-      const withPhotos = project.waypoints.filter((w) => w.photoData);
-      if (withPhotos.length === 0) {
-        alert("No photos in this project yet.");
-        setBusy(null);
-        return;
-      }
-      withPhotos.forEach((wp) => {
-        const base64 = wp.photoData.split(",")[1];
-        zip.file(wp.photoFileName || `LOC_${pad3(wp.locationNum)}.jpg`, base64, { base64: true });
-      });
-      const blob = await zip.generateAsync({ type: "blob" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${project.name.replace(/\s+/g, "_")}_photos.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    } catch (e) {
-      alert("Photo export failed: " + e.message);
-    }
-    setBusy(null);
-  }
-
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       <TopBar title="Export" onBack={onBack} />
@@ -1891,17 +1924,22 @@ ${placemarks}
         <ExportRow
           icon={<FileText size={20} />}
           title="PDF Report"
-          subtitle="Photo + attributes, 2 per page"
+          subtitle="Waypoint attributes, 2 per page, with photo filename reference"
           onClick={exportPDF}
           busy={busy === "pdf"}
         />
-        <ExportRow
-          icon={<ImageIcon size={20} />}
-          title="Photos (.zip)"
-          subtitle="All waypoint photos packaged"
-          onClick={exportPhotosZip}
-          busy={busy === "zip"}
-        />
+        <div style={{
+          background: COLORS.card,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 12,
+          padding: 16,
+          marginTop: 4,
+        }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink, marginBottom: 4 }}>Photos</div>
+          <div style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 1.5 }}>
+            Photos are saved directly to your Camera Roll when taken. Match them to waypoints using the filename and capture time recorded on each waypoint. No photo export needed.
+          </div>
+        </div>
       </div>
     </div>
   );
