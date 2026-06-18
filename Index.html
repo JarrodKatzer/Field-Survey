@@ -1,1 +1,1890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>Field Survey</title>
+<meta name="theme-color" content="#2B3A2F" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Field Survey" />
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #E8DCC4; overscroll-behavior: none; }
+  #root { min-height: 100vh; }
+</style>
+</head>
+<body>
+<div id="root"></div>
 
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ---------- Inline SVG icons (replacing lucide-react, which needs a bundler) ----------
+function Icon({ children, size = 20, color = "currentColor", style }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={style}>
+      {children}
+    </svg>
+  );
+}
+const MapPin = (p) => <Icon {...p}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 1 1 18 0Z" /><circle cx="12" cy="10" r="3" /></Icon>;
+const Camera = (p) => <Icon {...p}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z" /><circle cx="12" cy="13" r="3" /></Icon>;
+const Plus = (p) => <Icon {...p}><path d="M12 5v14M5 12h14" /></Icon>;
+const X = (p) => <Icon {...p}><path d="M18 6 6 18M6 6l12 12" /></Icon>;
+const Check = (p) => <Icon {...p}><path d="M20 6 9 17l-5-5" /></Icon>;
+const ChevronLeft = (p) => <Icon {...p}><path d="M15 18l-6-6 6-6" /></Icon>;
+const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></Icon>;
+const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></Icon>;
+const Trash2 = (p) => <Icon {...p}><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></Icon>;
+const Edit3 = (p) => <Icon {...p}><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Icon>;
+const MapIcon = (p) => <Icon {...p}><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4Z" /><path d="M8 2v16M16 6v16" /></Icon>;
+const List = (p) => <Icon {...p}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></Icon>;
+const FileText = (p) => <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" /></Icon>;
+const AlertCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><path d="M12 8v4M12 16h.01" /></Icon>;
+const ImageIcon = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></Icon>;
+
+// ---------- Constants ----------
+const COLORS = {
+  bg: "#E8DCC4",
+  card: "#FAF7F0",
+  ink: "#2B3A2F",
+  inkSoft: "#5C6B5E",
+  rust: "#A8431E",
+  rustDark: "#7E3015",
+  amber: "#D97706",
+  line: "#C9B896",
+};
+
+const STORAGE_PREFIX = "fieldsurvey";
+
+// ---------- Helpers ----------
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+function haversineFeet(lat1, lon1, lat2, lon2) {
+  const R = 20902231; // earth radius in feet
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function pad3(n) {
+  return String(n).padStart(3, "0");
+}
+
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.55);
+    // second chime
+    setTimeout(() => {
+      const ctx2 = new (window.AudioContext || window.webkitAudioContext)();
+      const osc2 = ctx2.createOscillator();
+      const gain2 = ctx2.createGain();
+      osc2.type = "sine";
+      osc2.frequency.setValueAtTime(1180, ctx2.currentTime);
+      gain2.gain.setValueAtTime(0.0001, ctx2.currentTime);
+      gain2.gain.exponentialRampToValueAtTime(0.25, ctx2.currentTime + 0.02);
+      gain2.gain.exponentialRampToValueAtTime(0.0001, ctx2.currentTime + 0.4);
+      osc2.connect(gain2);
+      gain2.connect(ctx2.destination);
+      osc2.start();
+      osc2.stop(ctx2.currentTime + 0.45);
+    }, 150);
+  } catch (e) {
+    // audio not available, ignore
+  }
+}
+
+async function storageGet(key, fallback) {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + ":" + key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+async function storageSet(key, value) {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + ":" + key, JSON.stringify(value));
+  } catch (e) {
+    console.error("storage set failed", e);
+    if (e.name === "QuotaExceededError") {
+      alert("Storage is full. Export your data and consider removing old photos to free up space.");
+    }
+  }
+}
+
+// ---------- Main App ----------
+function FieldSurveyApp() {
+  const [view, setView] = useState("projects"); // projects, projectSetup, capture, waypointList, map, export, waypointEdit
+  const [projects, setProjects] = useState([]);
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const p = await storageGet("projects:index", []);
+      setProjects(p);
+      setLoaded(true);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (loaded) storageSet("projects:index", projects);
+  }, [projects, loaded]);
+
+  const activeProject = projects.find((p) => p.id === activeProjectId);
+
+  const updateProject = useCallback((id, patch) => {
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  }, []);
+
+  if (!loaded) {
+    return (
+      <div style={{ ...screenStyle, alignItems: "center", justifyContent: "center" }}>
+        <div style={{ color: COLORS.ink, fontFamily: "ui-monospace, monospace", letterSpacing: 1 }}>
+          LOADING…
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={screenStyle}>
+      <style>{globalCss}</style>
+      {view === "projects" && (
+        <ProjectsScreen
+          projects={projects}
+          setProjects={setProjects}
+          onOpen={(id) => {
+            setActiveProjectId(id);
+            setView("capture");
+          }}
+        />
+      )}
+      {view === "capture" && activeProject && (
+        <CaptureScreen
+          project={activeProject}
+          updateProject={(patch) => updateProject(activeProject.id, patch)}
+          onBack={() => setView("projects")}
+          onNav={setView}
+        />
+      )}
+      {view === "waypointList" && activeProject && (
+        <WaypointListScreen
+          project={activeProject}
+          updateProject={(patch) => updateProject(activeProject.id, patch)}
+          onBack={() => setView("capture")}
+          onNav={setView}
+        />
+      )}
+      {view === "map" && activeProject && (
+        <MapScreen project={activeProject} onBack={() => setView("capture")} />
+      )}
+      {view === "settings" && activeProject && (
+        <SettingsScreen
+          project={activeProject}
+          updateProject={(patch) => updateProject(activeProject.id, patch)}
+          onBack={() => setView("capture")}
+        />
+      )}
+      {view === "export" && activeProject && (
+        <ExportScreen project={activeProject} onBack={() => setView("capture")} />
+      )}
+    </div>
+  );
+}
+
+const screenStyle = {
+  minHeight: "100vh",
+  background: COLORS.bg,
+  fontFamily:
+    "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
+  color: COLORS.ink,
+  display: "flex",
+  flexDirection: "column",
+};
+
+const globalCss = `
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  button { font-family: inherit; cursor: pointer; }
+  input, select, textarea { font-family: inherit; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid ${COLORS.rust}; outline-offset: 1px; }
+  ::placeholder { color: #9a9080; }
+`;
+
+// ---------- Reusable bits ----------
+function TopBar({ title, onBack, right }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "14px 16px",
+        background: COLORS.ink,
+        color: COLORS.card,
+        position: "sticky",
+        top: 0,
+        zIndex: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 40 }}>
+        {onBack && (
+          <button
+            onClick={onBack}
+            style={{ background: "none", border: "none", color: COLORS.card, padding: 6 }}
+            aria-label="Back"
+          >
+            <ChevronLeft size={24} />
+          </button>
+        )}
+      </div>
+      <div
+        style={{
+          fontWeight: 800,
+          fontSize: 17,
+          letterSpacing: 0.5,
+          textTransform: "uppercase",
+          fontFamily: "ui-monospace, 'SF Mono', monospace",
+        }}
+      >
+        {title}
+      </div>
+      <div style={{ minWidth: 40, display: "flex", justifyContent: "flex-end" }}>{right}</div>
+    </div>
+  );
+}
+
+function LocationBadge({ num, size = 36 }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 6,
+        background: COLORS.rust,
+        color: "#fff",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "ui-monospace, 'SF Mono', monospace",
+        fontWeight: 800,
+        fontSize: size * 0.36,
+        flexShrink: 0,
+        border: `2px solid ${COLORS.rustDark}`,
+        boxShadow: "0 1px 0 rgba(0,0,0,0.2)",
+      }}
+    >
+      {num}
+    </div>
+  );
+}
+
+function PrimaryButton({ children, onClick, style, disabled, icon }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        background: disabled ? "#9a8a6f" : COLORS.rust,
+        color: "#fff",
+        border: "none",
+        borderRadius: 10,
+        padding: "16px 20px",
+        fontWeight: 700,
+        fontSize: 16,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        boxShadow: disabled ? "none" : "0 2px 0 " + COLORS.rustDark,
+        ...style,
+      }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function SecondaryButton({ children, onClick, style, icon }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        background: COLORS.card,
+        color: COLORS.ink,
+        border: `2px solid ${COLORS.ink}`,
+        borderRadius: 10,
+        padding: "14px 18px",
+        fontWeight: 700,
+        fontSize: 15,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        ...style,
+      }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+// ---------- Projects Screen ----------
+function ProjectsScreen({ projects, setProjects, onOpen }) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+
+  function createProject() {
+    if (!name.trim()) return;
+    const p = {
+      id: uid(),
+      name: name.trim(),
+      createdAt: new Date().toISOString(),
+      nextLocationNum: 1,
+      proximityThresholdFeet: 30,
+      customFields: [], // {id, label, type: 'text'|'dropdown', options: []}
+      waypoints: [], // {id, locationNum, description, lat, lon, photoFileName, photoData, customValues: {fieldId: value}, createdAt}
+    };
+    setProjects((prev) => [...prev, p]);
+    setName("");
+    setCreating(false);
+    onOpen(p.id);
+  }
+
+  function deleteProject(id) {
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Field Survey" />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, fontWeight: 600 }}>
+          PROJECTS
+        </div>
+        {projects.length === 0 && !creating && (
+          <div
+            style={{
+              background: COLORS.card,
+              border: `2px dashed ${COLORS.line}`,
+              borderRadius: 12,
+              padding: 28,
+              textAlign: "center",
+              color: COLORS.inkSoft,
+            }}
+          >
+            No projects yet. Start one to begin recording waypoints.
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {projects.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                background: COLORS.card,
+                borderRadius: 12,
+                padding: 16,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                border: `1px solid ${COLORS.line}`,
+                boxShadow: "0 1px 3px rgba(43,58,47,0.1)",
+              }}
+            >
+              <div onClick={() => onOpen(p.id)} style={{ flex: 1, cursor: "pointer" }}>
+                <div style={{ fontWeight: 800, fontSize: 17 }}>{p.name}</div>
+                <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 2 }}>
+                  {p.waypoints.length} waypoint{p.waypoints.length !== 1 ? "s" : ""} ·{" "}
+                  {p.customFields.length} custom field{p.customFields.length !== 1 ? "s" : ""}
+                </div>
+              </div>
+              <button
+                onClick={() => deleteProject(p.id)}
+                aria-label="Delete project"
+                style={{ background: "none", border: "none", color: COLORS.rust, padding: 8 }}
+              >
+                <Trash2 size={20} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {creating ? (
+          <div
+            style={{
+              marginTop: 16,
+              background: COLORS.card,
+              borderRadius: 12,
+              padding: 16,
+              border: `1px solid ${COLORS.line}`,
+            }}
+          >
+            <label style={labelStyle}>Project name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Stumpy Lake Trail Survey"
+              style={inputStyle}
+              onKeyDown={(e) => e.key === "Enter" && createProject()}
+            />
+            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+              <SecondaryButton onClick={() => setCreating(false)} style={{ flex: 1 }}>
+                Cancel
+              </SecondaryButton>
+              <PrimaryButton onClick={createProject} style={{ flex: 1 }}>
+                Create
+              </PrimaryButton>
+            </div>
+          </div>
+        ) : (
+          <button
+            onClick={() => setCreating(true)}
+            style={{
+              marginTop: 16,
+              width: "100%",
+              background: "none",
+              border: `2px solid ${COLORS.ink}`,
+              borderRadius: 10,
+              padding: "14px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontWeight: 700,
+              color: COLORS.ink,
+            }}
+          >
+            <Plus size={20} /> New Project
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const labelStyle = {
+  display: "block",
+  fontSize: 12,
+  fontWeight: 700,
+  color: COLORS.inkSoft,
+  textTransform: "uppercase",
+  letterSpacing: 0.5,
+  marginBottom: 6,
+};
+
+const inputStyle = {
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: 8,
+  border: `1.5px solid ${COLORS.line}`,
+  fontSize: 16,
+  background: "#fff",
+  color: COLORS.ink,
+};
+
+// ---------- Capture Screen (main hub for a project) ----------
+function CaptureScreen({ project, updateProject, onBack, onNav }) {
+  const [gettingLoc, setGettingLoc] = useState(false);
+  const [pendingWaypoint, setPendingWaypoint] = useState(null); // {lat, lon, locationNum}
+  const [monitoring, setMonitoring] = useState(true);
+  const [proximityAlert, setProximityAlert] = useState(null); // waypoint object
+  const watchIdRef = useRef(null);
+  const alertedRecentlyRef = useRef({}); // id -> timestamp to debounce repeated dings
+
+  // GPS monitoring loop
+  useEffect(() => {
+    if (!monitoring || !("geolocation" in navigator)) return;
+    const id = navigator.geolocation.watchPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        for (const wp of project.waypoints) {
+          const dist = haversineFeet(latitude, longitude, wp.lat, wp.lon);
+          if (dist <= project.proximityThresholdFeet) {
+            const lastAlert = alertedRecentlyRef.current[wp.id] || 0;
+            const now = Date.now();
+            if (now - lastAlert > 60000) {
+              alertedRecentlyRef.current[wp.id] = now;
+              playDing();
+              setProximityAlert(wp);
+            }
+          }
+        }
+      },
+      (err) => console.warn("geo watch error", err),
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+    );
+    watchIdRef.current = id;
+    return () => navigator.geolocation.clearWatch(id);
+  }, [monitoring, project.waypoints, project.proximityThresholdFeet]);
+
+  function markLocation() {
+    setGettingLoc(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGettingLoc(false);
+        setPendingWaypoint({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          locationNum: project.nextLocationNum,
+        });
+      },
+      (err) => {
+        setGettingLoc(false);
+        alert("Could not get location: " + err.message);
+      },
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  }
+
+  function saveWaypoint(waypointData) {
+    const newWp = { id: uid(), createdAt: new Date().toISOString(), ...waypointData };
+    updateProject({
+      waypoints: [...project.waypoints, newWp],
+      nextLocationNum: project.nextLocationNum + 1,
+    });
+    setPendingWaypoint(null);
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar
+        title={project.name}
+        onBack={onBack}
+        right={
+          <button
+            onClick={() => onNav("settings")}
+            style={{ background: "none", border: "none", color: COLORS.card, padding: 6 }}
+            aria-label="Settings"
+          >
+            <Settings size={22} />
+          </button>
+        }
+      />
+
+      <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div
+          style={{
+            background: monitoring ? "#DCE8D5" : COLORS.card,
+            border: `1.5px solid ${monitoring ? "#6B8F5C" : COLORS.line}`,
+            borderRadius: 10,
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: 13,
+          }}
+        >
+          <span style={{ fontWeight: 700, color: monitoring ? "#3A5C2E" : COLORS.inkSoft }}>
+            {monitoring ? `● Monitoring active (±${project.proximityThresholdFeet} ft)` : "○ Monitoring paused"}
+          </span>
+          <button
+            onClick={() => setMonitoring((m) => !m)}
+            style={{
+              background: "none",
+              border: `1.5px solid ${monitoring ? "#3A5C2E" : COLORS.ink}`,
+              borderRadius: 6,
+              padding: "4px 10px",
+              fontWeight: 700,
+              fontSize: 12,
+              color: monitoring ? "#3A5C2E" : COLORS.ink,
+            }}
+          >
+            {monitoring ? "Pause" : "Resume"}
+          </button>
+        </div>
+
+        <button
+          onClick={markLocation}
+          disabled={gettingLoc}
+          style={{
+            background: COLORS.rust,
+            color: "#fff",
+            border: "none",
+            borderRadius: 16,
+            padding: "40px 20px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 10,
+            boxShadow: `0 3px 0 ${COLORS.rustDark}`,
+          }}
+        >
+          <MapPin size={44} />
+          <span style={{ fontWeight: 800, fontSize: 20, letterSpacing: 0.5 }}>
+            {gettingLoc ? "GETTING LOCATION…" : "MARK WAYPOINT"}
+          </span>
+          <span style={{ fontSize: 13, opacity: 0.9, fontFamily: "ui-monospace, monospace" }}>
+            Next: Location {pad3(project.nextLocationNum)}
+          </span>
+        </button>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <SecondaryButton onClick={() => onNav("waypointList")} icon={<List size={18} />}>
+            Waypoints ({project.waypoints.length})
+          </SecondaryButton>
+          <SecondaryButton onClick={() => onNav("map")} icon={<MapIcon size={18} />}>
+            Map
+          </SecondaryButton>
+        </div>
+        <PrimaryButton onClick={() => onNav("export")} icon={<Download size={18} />} style={{ background: COLORS.ink, boxShadow: "0 2px 0 #182019" }}>
+          Export Data
+        </PrimaryButton>
+      </div>
+
+      {pendingWaypoint && (
+        <AttributeFormModal
+          project={project}
+          waypoint={pendingWaypoint}
+          onSave={saveWaypoint}
+          onCancel={() => setPendingWaypoint(null)}
+        />
+      )}
+
+      {proximityAlert && (
+        <ProximityAlertModal
+          waypoint={proximityAlert}
+          onYes={() => {
+            setProximityAlert(null);
+            onNav("waypointList");
+          }}
+          onNo={() => setProximityAlert(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- Attribute Form Modal (used for new waypoint capture) ----------
+function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
+  const [description, setDescription] = useState("");
+  const [customValues, setCustomValues] = useState(() => {
+    const init = {};
+    project.customFields.forEach((f) => (init[f.id] = ""));
+    return init;
+  });
+  const [photoData, setPhotoData] = useState(null);
+  const [photoFileName, setPhotoFileName] = useState(null);
+  const fileInputRef = useRef(null);
+
+  function handlePhoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      // downscale for storage efficiency
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxDim = 1200;
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = (height * maxDim) / width;
+          width = maxDim;
+        } else if (height > maxDim) {
+          width = (width * maxDim) / height;
+          height = maxDim;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.75);
+        setPhotoData(dataUrl);
+        const fname = `LOC_${pad3(waypoint.locationNum)}_${project.name.replace(/\s+/g, "_")}.jpg`;
+        setPhotoFileName(fname);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function handleSave() {
+    onSave({
+      locationNum: waypoint.locationNum,
+      description,
+      lat: waypoint.lat,
+      lon: waypoint.lon,
+      photoData,
+      photoFileName,
+      customValues,
+    });
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalCardStyle, maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 16px 0" }}>
+          <LocationBadge num={pad3(waypoint.locationNum)} size={44} />
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>New Waypoint</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft, fontFamily: "ui-monospace, monospace" }}>
+              {waypoint.lat.toFixed(6)}, {waypoint.lon.toFixed(6)}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
+          <label style={labelStyle}>Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value.slice(0, 200))}
+            placeholder="What's here? (max 200 characters)"
+            style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
+          />
+          <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "right", marginTop: 2 }}>
+            {description.length}/200
+          </div>
+
+          {project.customFields.map((field) => (
+            <div key={field.id} style={{ marginTop: 14 }}>
+              <label style={labelStyle}>{field.label}</label>
+              {field.type === "dropdown" ? (
+                <EditableDropdown
+                  options={field.options}
+                  value={customValues[field.id]}
+                  onChange={(v) => setCustomValues((prev) => ({ ...prev, [field.id]: v }))}
+                />
+              ) : (
+                <input
+                  value={customValues[field.id] || ""}
+                  onChange={(e) =>
+                    setCustomValues((prev) => ({ ...prev, [field.id]: e.target.value }))
+                  }
+                  style={inputStyle}
+                  placeholder={field.label}
+                />
+              )}
+            </div>
+          ))}
+
+          <div style={{ marginTop: 16 }}>
+            <label style={labelStyle}>Photo</label>
+            {photoData ? (
+              <div style={{ position: "relative" }}>
+                <img
+                  src={photoData}
+                  alt="waypoint"
+                  style={{ width: "100%", borderRadius: 10, border: `1.5px solid ${COLORS.line}` }}
+                />
+                <button
+                  onClick={() => {
+                    setPhotoData(null);
+                    setPhotoFileName(null);
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    background: "rgba(43,58,47,0.85)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: 8,
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => fileInputRef.current.click()}
+                style={{
+                  width: "100%",
+                  border: `2px dashed ${COLORS.line}`,
+                  borderRadius: 10,
+                  padding: 24,
+                  background: "#fff",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  color: COLORS.inkSoft,
+                }}
+              >
+                <Camera size={28} />
+                <span style={{ fontWeight: 600, fontSize: 14 }}>Take Photo</span>
+              </button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhoto}
+              style={{ display: "none" }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
+          <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>
+            Discard
+          </SecondaryButton>
+          <PrimaryButton onClick={handleSave} style={{ flex: 1 }} icon={<Check size={18} />}>
+            Save Waypoint
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditableDropdown({ options, value, onChange }) {
+  const [customMode, setCustomMode] = useState(!options.includes(value) && value);
+  if (customMode) {
+    return (
+      <input
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        style={inputStyle}
+        placeholder="Custom value"
+      />
+    );
+  }
+  return (
+    <select
+      value={value || ""}
+      onChange={(e) => {
+        if (e.target.value === "__custom__") {
+          setCustomMode(true);
+          onChange("");
+        } else {
+          onChange(e.target.value);
+        }
+      }}
+      style={{ ...inputStyle, appearance: "none" }}
+    >
+      <option value="" disabled>
+        Select…
+      </option>
+      {options.map((opt) => (
+        <option key={opt} value={opt}>
+          {opt}
+        </option>
+      ))}
+      <option value="__custom__">Other (type custom)…</option>
+    </select>
+  );
+}
+
+function modalOverlayStyleBase() {
+  return {
+    position: "fixed",
+    inset: 0,
+    background: "rgba(43,58,47,0.55)",
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    zIndex: 100,
+  };
+}
+const modalOverlayStyle = modalOverlayStyleBase();
+const modalCardStyle = {
+  background: COLORS.bg,
+  borderRadius: "18px 18px 0 0",
+  width: "100%",
+  maxWidth: 600,
+};
+
+// ---------- Proximity Alert Modal ----------
+function ProximityAlertModal({ waypoint, onYes, onNo }) {
+  return (
+    <div style={{ ...modalOverlayStyleBase(), alignItems: "center" }}>
+      <div
+        style={{
+          background: COLORS.amber,
+          borderRadius: 16,
+          padding: 24,
+          width: "85%",
+          maxWidth: 360,
+          textAlign: "center",
+          border: `3px solid ${COLORS.rustDark}`,
+          boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
+        }}
+      >
+        <AlertCircle size={36} color="#fff" style={{ marginBottom: 8 }} />
+        <div style={{ color: "#fff", fontWeight: 800, fontSize: 19, marginBottom: 4 }}>
+          You are close to Location {pad3(waypoint.locationNum)}
+        </div>
+        <div style={{ color: "#fff", fontSize: 14, marginBottom: 18, opacity: 0.95 }}>
+          Would you like to edit its attribute group?
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={onNo}
+            style={{
+              flex: 1,
+              background: "rgba(255,255,255,0.2)",
+              border: "2px solid #fff",
+              color: "#fff",
+              borderRadius: 10,
+              padding: "12px",
+              fontWeight: 700,
+            }}
+          >
+            No
+          </button>
+          <button
+            onClick={onYes}
+            style={{
+              flex: 1,
+              background: "#fff",
+              border: "2px solid #fff",
+              color: COLORS.rustDark,
+              borderRadius: 10,
+              padding: "12px",
+              fontWeight: 700,
+            }}
+          >
+            Yes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Waypoint List / Edit Screen ----------
+function WaypointListScreen({ project, updateProject, onBack, onNav }) {
+  const [editingWp, setEditingWp] = useState(null);
+
+  function deleteWaypoint(id) {
+    updateProject({ waypoints: project.waypoints.filter((w) => w.id !== id) });
+  }
+
+  function saveEdit(updated) {
+    updateProject({
+      waypoints: project.waypoints.map((w) => (w.id === updated.id ? updated : w)),
+    });
+    setEditingWp(null);
+  }
+
+  const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Waypoints" onBack={onBack} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+        {sorted.length === 0 ? (
+          <div style={{ textAlign: "center", color: COLORS.inkSoft, marginTop: 40 }}>
+            No waypoints recorded yet.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {sorted.map((wp) => (
+              <div
+                key={wp.id}
+                style={{
+                  background: COLORS.card,
+                  borderRadius: 12,
+                  padding: 12,
+                  display: "flex",
+                  gap: 12,
+                  border: `1px solid ${COLORS.line}`,
+                }}
+              >
+                {wp.photoData ? (
+                  <img
+                    src={wp.photoData}
+                    alt=""
+                    style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      width: 56,
+                      height: 56,
+                      borderRadius: 8,
+                      background: COLORS.bg,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      color: COLORS.inkSoft,
+                    }}
+                  >
+                    <ImageIcon size={22} />
+                  </div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }} onClick={() => setEditingWp(wp)}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <LocationBadge num={pad3(wp.locationNum)} size={26} />
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>
+                      {wp.description || <em style={{ color: COLORS.inkSoft }}>No description</em>}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "ui-monospace, monospace", marginTop: 4 }}>
+                    {wp.lat.toFixed(6)}, {wp.lon.toFixed(6)}
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <button
+                    onClick={() => setEditingWp(wp)}
+                    style={{ background: "none", border: "none", color: COLORS.ink, padding: 6 }}
+                  >
+                    <Edit3 size={18} />
+                  </button>
+                  <button
+                    onClick={() => deleteWaypoint(wp.id)}
+                    style={{ background: "none", border: "none", color: COLORS.rust, padding: 6 }}
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {editingWp && (
+        <EditWaypointModal
+          project={project}
+          waypoint={editingWp}
+          onSave={saveEdit}
+          onCancel={() => setEditingWp(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
+  const [description, setDescription] = useState(waypoint.description || "");
+  const [customValues, setCustomValues] = useState(waypoint.customValues || {});
+  const [photoData, setPhotoData] = useState(waypoint.photoData || null);
+  const [photoFileName, setPhotoFileName] = useState(waypoint.photoFileName || null);
+  const fileInputRef = useRef(null);
+
+  function handlePhoto(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxDim = 1200;
+        let { width, height } = img;
+        if (width > height && width > maxDim) {
+          height = (height * maxDim) / width;
+          width = maxDim;
+        } else if (height > maxDim) {
+          width = (width * maxDim) / height;
+          height = maxDim;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+        setPhotoData(canvas.toDataURL("image/jpeg", 0.75));
+        setPhotoFileName(`LOC_${pad3(waypoint.locationNum)}_${project.name.replace(/\s+/g, "_")}.jpg`);
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div style={modalOverlayStyle}>
+      <div style={{ ...modalCardStyle, maxHeight: "92vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 16px 0" }}>
+          <LocationBadge num={pad3(waypoint.locationNum)} size={44} />
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>Edit Waypoint</div>
+            <div style={{ fontSize: 12, color: COLORS.inkSoft, fontFamily: "ui-monospace, monospace" }}>
+              {waypoint.lat.toFixed(6)}, {waypoint.lon.toFixed(6)}
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
+          <label style={labelStyle}>Description</label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value.slice(0, 200))}
+            style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
+          />
+          <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "right", marginTop: 2 }}>
+            {description.length}/200
+          </div>
+          {project.customFields.map((field) => (
+            <div key={field.id} style={{ marginTop: 14 }}>
+              <label style={labelStyle}>{field.label}</label>
+              {field.type === "dropdown" ? (
+                <EditableDropdown
+                  options={field.options}
+                  value={customValues[field.id]}
+                  onChange={(v) => setCustomValues((prev) => ({ ...prev, [field.id]: v }))}
+                />
+              ) : (
+                <input
+                  value={customValues[field.id] || ""}
+                  onChange={(e) => setCustomValues((prev) => ({ ...prev, [field.id]: e.target.value }))}
+                  style={inputStyle}
+                />
+              )}
+            </div>
+          ))}
+          <div style={{ marginTop: 16 }}>
+            <label style={labelStyle}>Photo</label>
+            {photoData ? (
+              <div style={{ position: "relative" }}>
+                <img src={photoData} alt="" style={{ width: "100%", borderRadius: 10 }} />
+                <button
+                  onClick={() => {
+                    setPhotoData(null);
+                    setPhotoFileName(null);
+                  }}
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    background: "rgba(43,58,47,0.85)",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 8,
+                    padding: 8,
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => fileInputRef.current.click()}
+                style={{
+                  width: "100%",
+                  border: `2px dashed ${COLORS.line}`,
+                  borderRadius: 10,
+                  padding: 24,
+                  background: "#fff",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 6,
+                  color: COLORS.inkSoft,
+                }}
+              >
+                <Camera size={28} />
+                <span style={{ fontWeight: 600, fontSize: 14 }}>Take Photo</span>
+              </button>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhoto}
+              style={{ display: "none" }}
+            />
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
+          <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>
+            Cancel
+          </SecondaryButton>
+          <PrimaryButton
+            onClick={() =>
+              onSave({ ...waypoint, description, customValues, photoData, photoFileName })
+            }
+            style={{ flex: 1 }}
+            icon={<Check size={18} />}
+          >
+            Save Changes
+          </PrimaryButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Map Screen ----------
+function MapScreen({ project, onBack }) {
+  const waypoints = project.waypoints;
+  if (waypoints.length === 0) {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <TopBar title="Map" onBack={onBack} />
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.inkSoft }}>
+          No waypoints to show yet.
+        </div>
+      </div>
+    );
+  }
+
+  const lats = waypoints.map((w) => w.lat);
+  const lons = waypoints.map((w) => w.lon);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const padLat = Math.max((maxLat - minLat) * 0.15, 0.0008);
+  const padLon = Math.max((maxLon - minLon) * 0.15, 0.0008);
+  const viewMinLat = minLat - padLat, viewMaxLat = maxLat + padLat;
+  const viewMinLon = minLon - padLon, viewMaxLon = maxLon + padLon;
+
+  const W = 100, H = 100;
+  function project_(lat, lon) {
+    const x = ((lon - viewMinLon) / (viewMaxLon - viewMinLon)) * W;
+    const y = H - ((lat - viewMinLat) / (viewMaxLat - viewMinLat)) * H;
+    return { x, y };
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Map" onBack={onBack} />
+      <div style={{ flex: 1, position: "relative", background: "#D8CDA8", overflow: "hidden" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "100%" }} preserveAspectRatio="none">
+          <defs>
+            <pattern id="grid" width="5" height="5" patternUnits="userSpaceOnUse">
+              <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#C4B690" strokeWidth="0.15" />
+            </pattern>
+          </defs>
+          <rect width={W} height={H} fill="url(#grid)" />
+          {waypoints.map((wp) => {
+            const { x, y } = project_(wp.lat, wp.lon);
+            return (
+              <g key={wp.id}>
+                <circle cx={x} cy={y} r="2.6" fill={COLORS.rust} stroke="#fff" strokeWidth="0.5" />
+              </g>
+            );
+          })}
+        </svg>
+        {waypoints.map((wp) => {
+          const { x, y } = project_(wp.lat, wp.lon);
+          return (
+            <div
+              key={wp.id}
+              style={{
+                position: "absolute",
+                left: `${x}%`,
+                top: `${y}%`,
+                transform: "translate(-50%, -130%)",
+                background: COLORS.ink,
+                color: "#fff",
+                fontSize: 10,
+                fontFamily: "ui-monospace, monospace",
+                fontWeight: 700,
+                padding: "2px 5px",
+                borderRadius: 4,
+                whiteSpace: "nowrap",
+                pointerEvents: "none",
+              }}
+            >
+              {pad3(wp.locationNum)}
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ padding: 12, fontSize: 12, color: COLORS.inkSoft, textAlign: "center", background: COLORS.card }}>
+        Simplified plot — {waypoints.length} point{waypoints.length !== 1 ? "s" : ""}. For full basemap detail, export to KML and open in Google Earth.
+      </div>
+    </div>
+  );
+}
+
+// ---------- Settings Screen ----------
+function SettingsScreen({ project, updateProject, onBack }) {
+  const [fields, setFields] = useState(project.customFields);
+  const [threshold, setThreshold] = useState(project.proximityThresholdFeet);
+  const [addingField, setAddingField] = useState(false);
+
+  function persistFields(newFields) {
+    setFields(newFields);
+    updateProject({ customFields: newFields });
+  }
+
+  function deleteField(id) {
+    persistFields(fields.filter((f) => f.id !== id));
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Project Settings" onBack={onBack} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+        <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
+          <label style={labelStyle}>Proximity alert distance (feet)</label>
+          <input
+            type="number"
+            value={threshold}
+            onChange={(e) => {
+              const v = Number(e.target.value) || 0;
+              setThreshold(v);
+              updateProject({ proximityThresholdFeet: v });
+            }}
+            style={inputStyle}
+          />
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6 }}>
+            GPS accuracy is typically 10–30 ft. Set this above your expected drift to avoid false alerts between close points.
+          </div>
+        </div>
+
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700, marginBottom: 10 }}>
+          CUSTOM ATTRIBUTE FIELDS
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {fields.map((f) => (
+            <div
+              key={f.id}
+              style={{
+                background: COLORS.card,
+                borderRadius: 10,
+                padding: 12,
+                border: `1px solid ${COLORS.line}`,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 700 }}>{f.label}</div>
+                <div style={{ fontSize: 12, color: COLORS.inkSoft }}>
+                  {f.type === "dropdown" ? `Dropdown: ${f.options.join(", ")}` : "Text field"}
+                </div>
+              </div>
+              <button onClick={() => deleteField(f.id)} style={{ background: "none", border: "none", color: COLORS.rust, padding: 6 }}>
+                <Trash2 size={18} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {addingField ? (
+          <NewFieldForm
+            onCancel={() => setAddingField(false)}
+            onAdd={(field) => {
+              persistFields([...fields, field]);
+              setAddingField(false);
+            }}
+          />
+        ) : (
+          <button
+            onClick={() => setAddingField(true)}
+            style={{
+              width: "100%",
+              background: "none",
+              border: `2px solid ${COLORS.ink}`,
+              borderRadius: 10,
+              padding: 14,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontWeight: 700,
+            }}
+          >
+            <Plus size={18} /> Add Custom Field
+          </button>
+        )}
+
+        <div style={{ marginTop: 24, fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>
+          Default fields (Location number, Description, Latitude, Longitude) apply to every waypoint and can't be removed.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NewFieldForm({ onAdd, onCancel }) {
+  const [label, setLabel] = useState("");
+  const [type, setType] = useState("text");
+  const [options, setOptions] = useState([]);
+  const [optionDraft, setOptionDraft] = useState("");
+
+  function addOption() {
+    const val = optionDraft.trim();
+    if (!val) return;
+    if (options.includes(val)) {
+      setOptionDraft("");
+      return;
+    }
+    setOptions((prev) => [...prev, val]);
+    setOptionDraft("");
+  }
+
+  function removeOption(opt) {
+    setOptions((prev) => prev.filter((o) => o !== opt));
+  }
+
+  function add() {
+    if (!label.trim()) return;
+    if (type === "dropdown" && options.length === 0) return;
+    onAdd({ id: uid(), label: label.trim(), type, options: type === "dropdown" ? options : [] });
+  }
+
+  return (
+    <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}` }}>
+      <label style={labelStyle}>Field label</label>
+      <input value={label} onChange={(e) => setLabel(e.target.value)} style={inputStyle} placeholder="e.g. Hardware Type" />
+      <label style={{ ...labelStyle, marginTop: 12 }}>Field type</label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={() => setType("text")}
+          style={{
+            flex: 1,
+            padding: 10,
+            borderRadius: 8,
+            border: `2px solid ${type === "text" ? COLORS.rust : COLORS.line}`,
+            background: type === "text" ? "#F3E4D8" : "#fff",
+            fontWeight: 700,
+            color: COLORS.ink,
+          }}
+        >
+          Text
+        </button>
+        <button
+          onClick={() => setType("dropdown")}
+          style={{
+            flex: 1,
+            padding: 10,
+            borderRadius: 8,
+            border: `2px solid ${type === "dropdown" ? COLORS.rust : COLORS.line}`,
+            background: type === "dropdown" ? "#F3E4D8" : "#fff",
+            fontWeight: 700,
+            color: COLORS.ink,
+          }}
+        >
+          Dropdown
+        </button>
+      </div>
+      {type === "dropdown" && (
+        <>
+          <label style={{ ...labelStyle, marginTop: 12 }}>Add an option</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input
+              value={optionDraft}
+              onChange={(e) => setOptionDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addOption();
+                }
+              }}
+              style={{ ...inputStyle, flex: 1 }}
+              placeholder="e.g. Operational"
+            />
+            <button
+              onClick={addOption}
+              type="button"
+              style={{
+                background: COLORS.ink,
+                color: "#fff",
+                border: "none",
+                borderRadius: 8,
+                padding: "0 18px",
+                fontWeight: 700,
+              }}
+            >
+              Add
+            </button>
+          </div>
+          {options.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              {options.map((opt) => (
+                <div
+                  key={opt}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    background: "#fff",
+                    border: `1.5px solid ${COLORS.line}`,
+                    borderRadius: 20,
+                    padding: "6px 8px 6px 14px",
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                >
+                  {opt}
+                  <button
+                    onClick={() => removeOption(opt)}
+                    style={{
+                      background: COLORS.line,
+                      border: "none",
+                      borderRadius: "50%",
+                      width: 20,
+                      height: 20,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: 0,
+                      color: COLORS.ink,
+                    }}
+                    aria-label={`Remove ${opt}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {options.length === 0 && (
+            <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 8 }}>
+              Add at least one option before saving this field.
+            </div>
+          )}
+        </>
+      )}
+      <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+        <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>
+          Cancel
+        </SecondaryButton>
+        <PrimaryButton onClick={add} style={{ flex: 1 }}>
+          Add Field
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Export Screen ----------
+function ExportScreen({ project, onBack }) {
+  const [busy, setBusy] = useState(null);
+
+  function download(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function buildRows() {
+    const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+    return sorted.map((wp) => {
+      const row = {
+        Location: pad3(wp.locationNum),
+        Description: wp.description || "",
+        Latitude: wp.lat,
+        Longitude: wp.lon,
+      };
+      project.customFields.forEach((f) => {
+        row[f.label] = (wp.customValues && wp.customValues[f.id]) || "";
+      });
+      row.PhotoFileName = wp.photoFileName || "";
+      return row;
+    });
+  }
+
+  function exportCSV() {
+    setBusy("csv");
+    const rows = buildRows();
+    if (rows.length === 0) {
+      alert("No waypoints to export.");
+      setBusy(null);
+      return;
+    }
+    const headers = Object.keys(rows[0]);
+    const csvLines = [headers.join(",")];
+    rows.forEach((row) => {
+      csvLines.push(
+        headers
+          .map((h) => {
+            const val = String(row[h]).replace(/"/g, '""');
+            return `"${val}"`;
+          })
+          .join(",")
+      );
+    });
+    download(`${project.name.replace(/\s+/g, "_")}.csv`, csvLines.join("\n"), "text/csv");
+    setBusy(null);
+  }
+
+  function exportGeoJSON() {
+    setBusy("geojson");
+    const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+    const geojson = {
+      type: "FeatureCollection",
+      features: sorted.map((wp) => {
+        const props = {
+          Location: pad3(wp.locationNum),
+          Description: wp.description || "",
+        };
+        project.customFields.forEach((f) => {
+          props[f.label] = (wp.customValues && wp.customValues[f.id]) || "";
+        });
+        props.PhotoFileName = wp.photoFileName || "";
+        return {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [wp.lon, wp.lat] },
+          properties: props,
+        };
+      }),
+    };
+    download(`${project.name.replace(/\s+/g, "_")}.geojson`, JSON.stringify(geojson, null, 2), "application/geo+json");
+    setBusy(null);
+  }
+
+  function escapeXml(str) {
+    return String(str).replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
+  }
+
+  function exportKML() {
+    setBusy("kml");
+    const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+    const placemarks = sorted
+      .map((wp) => {
+        const extData = project.customFields
+          .map((f) => {
+            const val = (wp.customValues && wp.customValues[f.id]) || "";
+            return `<Data name="${escapeXml(f.label)}"><value>${escapeXml(val)}</value></Data>`;
+          })
+          .join("");
+        return `<Placemark>
+  <name>Location ${pad3(wp.locationNum)}</name>
+  <description>${escapeXml(wp.description || "")}</description>
+  <ExtendedData>
+    <Data name="PhotoFileName"><value>${escapeXml(wp.photoFileName || "")}</value></Data>
+    ${extData}
+  </ExtendedData>
+  <Point><coordinates>${wp.lon},${wp.lat},0</coordinates></Point>
+</Placemark>`;
+      })
+      .join("\n");
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>${escapeXml(project.name)}</name>
+${placemarks}
+</Document>
+</kml>`;
+    download(`${project.name.replace(/\s+/g, "_")}.kml`, kml, "application/vnd.google-earth.kml+xml");
+    setBusy(null);
+  }
+
+  async function exportPDF() {
+    setBusy("pdf");
+    try {
+      await ensureJsPDF();
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "pt", format: "letter" });
+      const pageW = 612, pageH = 792;
+      const margin = 36;
+      const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+      const slotH = (pageH - margin * 2) / 2;
+
+      sorted.forEach((wp, idx) => {
+        const slot = idx % 2;
+        if (slot === 0 && idx !== 0) doc.addPage();
+        const top = margin + slot * slotH;
+        const photoW = 200, photoH = slotH - 20;
+        const photoX = margin, photoY = top + 10;
+
+        if (wp.photoData) {
+          try {
+            doc.addImage(wp.photoData, "JPEG", photoX, photoY, photoW, Math.min(photoH, photoW), undefined, "FAST");
+          } catch (e) {
+            doc.setDrawColor(180);
+            doc.rect(photoX, photoY, photoW, photoH);
+            doc.text("Image error", photoX + 10, photoY + photoH / 2);
+          }
+        } else {
+          doc.setDrawColor(180);
+          doc.setFillColor(245, 242, 235);
+          doc.rect(photoX, photoY, photoW, photoH, "FD");
+          doc.setFontSize(11);
+          doc.setTextColor(120);
+          doc.text("No photo taken", photoX + photoW / 2, photoY + photoH / 2, { align: "center" });
+        }
+
+        const textX = photoX + photoW + 20;
+        let textY = top + 24;
+        doc.setFontSize(16);
+        doc.setTextColor(168, 67, 30);
+        doc.setFont(undefined, "bold");
+        doc.text(`Location ${pad3(wp.locationNum)}`, textX, textY);
+        textY += 18;
+
+        doc.setFontSize(10);
+        doc.setTextColor(40);
+        doc.setFont(undefined, "normal");
+        doc.text(`Lat: ${wp.lat.toFixed(6)}   Lon: ${wp.lon.toFixed(6)}`, textX, textY);
+        textY += 16;
+
+        doc.setFont(undefined, "bold");
+        doc.text("Description:", textX, textY);
+        textY += 13;
+        doc.setFont(undefined, "normal");
+        const descLines = doc.splitTextToSize(wp.description || "(none)", pageW - textX - margin);
+        doc.text(descLines, textX, textY);
+        textY += descLines.length * 13 + 6;
+
+        project.customFields.forEach((f) => {
+          const val = (wp.customValues && wp.customValues[f.id]) || "(none)";
+          doc.setFont(undefined, "bold");
+          doc.text(`${f.label}:`, textX, textY);
+          textY += 13;
+          doc.setFont(undefined, "normal");
+          const lines = doc.splitTextToSize(String(val), pageW - textX - margin);
+          doc.text(lines, textX, textY);
+          textY += lines.length * 13 + 6;
+        });
+
+        if (slot === 0) {
+          doc.setDrawColor(200);
+          doc.line(margin, top + slotH, pageW - margin, top + slotH);
+        }
+      });
+
+      doc.save(`${project.name.replace(/\s+/g, "_")}_waypoints.pdf`);
+    } catch (e) {
+      alert("PDF export failed: " + e.message);
+    }
+    setBusy(null);
+  }
+
+  async function exportPhotosZip() {
+    setBusy("zip");
+    try {
+      await ensureJSZip();
+      const zip = new window.JSZip();
+      const withPhotos = project.waypoints.filter((w) => w.photoData);
+      if (withPhotos.length === 0) {
+        alert("No photos in this project yet.");
+        setBusy(null);
+        return;
+      }
+      withPhotos.forEach((wp) => {
+        const base64 = wp.photoData.split(",")[1];
+        zip.file(wp.photoFileName || `LOC_${pad3(wp.locationNum)}.jpg`, base64, { base64: true });
+      });
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${project.name.replace(/\s+/g, "_")}_photos.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) {
+      alert("Photo export failed: " + e.message);
+    }
+    setBusy(null);
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Export" onBack={onBack} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700 }}>DATA</div>
+        <ExportRow
+          icon={<FileText size={20} />}
+          title="CSV"
+          subtitle="Spreadsheet-friendly, all attributes"
+          onClick={exportCSV}
+          busy={busy === "csv"}
+        />
+        <ExportRow
+          icon={<MapIcon size={20} />}
+          title="GeoJSON"
+          subtitle="For QGIS, ArcGIS, web maps"
+          onClick={exportGeoJSON}
+          busy={busy === "geojson"}
+        />
+        <ExportRow
+          icon={<MapIcon size={20} />}
+          title="KML"
+          subtitle="Opens directly in Google Earth"
+          onClick={exportKML}
+          busy={busy === "kml"}
+        />
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700, marginTop: 12 }}>
+          DOCUMENTS & PHOTOS
+        </div>
+        <ExportRow
+          icon={<FileText size={20} />}
+          title="PDF Report"
+          subtitle="Photo + attributes, 2 per page"
+          onClick={exportPDF}
+          busy={busy === "pdf"}
+        />
+        <ExportRow
+          icon={<ImageIcon size={20} />}
+          title="Photos (.zip)"
+          subtitle="All waypoint photos packaged"
+          onClick={exportPhotosZip}
+          busy={busy === "zip"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExportRow({ icon, title, subtitle, onClick, busy }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      style={{
+        background: COLORS.card,
+        border: `1px solid ${COLORS.line}`,
+        borderRadius: 12,
+        padding: 16,
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        textAlign: "left",
+        opacity: busy ? 0.6 : 1,
+      }}
+    >
+      <div style={{ color: COLORS.rust }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>{busy ? "Working…" : title}</div>
+        <div style={{ fontSize: 12, color: COLORS.inkSoft }}>{subtitle}</div>
+      </div>
+    </button>
+  );
+}
+
+// ---------- External libs are preloaded via <script> tags in index.html ----------
+function ensureJsPDF() {
+  return new Promise((resolve, reject) => {
+    if (window.jspdf) return resolve();
+    reject(new Error("jsPDF failed to load. Check your internet connection."));
+  });
+}
+
+function ensureJSZip() {
+  return new Promise((resolve, reject) => {
+    if (window.JSZip) return resolve();
+    reject(new Error("JSZip failed to load. Check your internet connection."));
+  });
+}
+
+// ---------- Mount ----------
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<FieldSurveyApp />);
+
+</script>
+</body>
+</html>
