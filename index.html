@@ -41,6 +41,10 @@ const Check = (p) => <Icon {...p}><path d="M20 6 9 17l-5-5" /></Icon>;
 const ChevronLeft = (p) => <Icon {...p}><path d="M15 18l-6-6 6-6" /></Icon>;
 const Settings = (p) => <Icon {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" /></Icon>;
 const Download = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></Icon>;
+const Upload = (p) => <Icon {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" /></Icon>;
+const Compass = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" /></Icon>;
+const Navigation = (p) => <Icon {...p}><polygon points="3 11 22 2 13 21 11 13 3 11" /></Icon>;
+const LayoutTemplate = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="7" rx="1" /><rect x="3" y="14" width="9" height="7" rx="1" /><rect x="16" y="14" width="5" height="7" rx="1" /></Icon>;
 const Trash2 = (p) => <Icon {...p}><path d="M3 6h18M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></Icon>;
 const Edit3 = (p) => <Icon {...p}><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></Icon>;
 const MapIcon = (p) => <Icon {...p}><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4Z" /><path d="M8 2v16M16 6v16" /></Icon>;
@@ -50,18 +54,153 @@ const AlertCircle = (p) => <Icon {...p}><circle cx="12" cy="12" r="10" /><path d
 const ImageIcon = (p) => <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></Icon>;
 
 // ---------- Constants ----------
+// Palette tuned for high-sunlight outdoor readability:
+// near-white background for max luminance, very dark ink for max text contrast,
+// saturated rust/amber that stay distinguishable under glare.
 const COLORS = {
-  bg: "#E8DCC4",
-  card: "#FAF7F0",
-  ink: "#2B3A2F",
-  inkSoft: "#5C6B5E",
-  rust: "#A8431E",
-  rustDark: "#7E3015",
-  amber: "#D97706",
-  line: "#C9B896",
+  bg: "#F2EAD8",        // brighter sand — higher luminance under sun
+  card: "#FFFFFF",      // pure white cards — maximum contrast against dark text
+  ink: "#1E2A22",       // near-black green-ink — deeper than before for contrast
+  inkSoft: "#4A5750",   // darkened soft text so it stays legible in glare
+  rust: "#9A3412",      // deeper, more saturated rust — reads clearly in bright light
+  rustDark: "#6B2410",
+  amber: "#B45309",     // deepened amber for alert legibility
+  line: "#BBA77E",      // slightly darker hairlines so edges remain visible
 };
 
 const STORAGE_PREFIX = "fieldsurvey";
+
+// ───────────────────────── Dropbox integration ─────────────────────────
+// App key is a public client identifier — safe to include in client-side code.
+// We use PKCE (no app secret), so this alone cannot grant anyone access to your
+// Dropbox; each user must still approve via Dropbox's own login screen, and the
+// resulting token is stored only on this device.
+const DROPBOX_APP_KEY = "yyw2qs9fgm9y932";
+
+function dbxRedirectUri() {
+  // Must exactly match the redirect URI registered in the Dropbox App Console.
+  // Uses the current page's origin + path so it works from GitHub Pages.
+  return window.location.origin + window.location.pathname;
+}
+
+// ----- PKCE helpers -----
+function base64UrlEncode(bytes) {
+  let str = btoa(String.fromCharCode(...new Uint8Array(bytes)));
+  return str.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function sha256(plain) {
+  const data = new TextEncoder().encode(plain);
+  return await crypto.subtle.digest("SHA-256", data);
+}
+function randomString(len) {
+  const arr = new Uint8Array(len);
+  crypto.getRandomValues(arr);
+  return base64UrlEncode(arr).slice(0, len);
+}
+
+// Begin the Dropbox login: build a code verifier/challenge, stash the verifier,
+// and redirect the browser to Dropbox's authorization page.
+async function dbxBeginLogin() {
+  const verifier = randomString(64);
+  const challenge = base64UrlEncode(await sha256(verifier));
+  sessionStorage.setItem("dbx_verifier", verifier);
+  const params = new URLSearchParams({
+    client_id: DROPBOX_APP_KEY,
+    response_type: "code",
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    redirect_uri: dbxRedirectUri(),
+    token_access_type: "online", // short-lived token, no long-lived refresh token
+    scope: "account_info.read files.metadata.read files.metadata.write files.content.read files.content.write",
+  });
+  window.location.href = "https://www.dropbox.com/oauth2/authorize?" + params.toString();
+}
+
+// On returning from Dropbox, exchange the ?code=... for an access token.
+async function dbxCompleteLogin(code) {
+  const verifier = sessionStorage.getItem("dbx_verifier");
+  if (!verifier) throw new Error("Missing PKCE verifier");
+  const body = new URLSearchParams({
+    code,
+    grant_type: "authorization_code",
+    client_id: DROPBOX_APP_KEY,
+    code_verifier: verifier,
+    redirect_uri: dbxRedirectUri(),
+  });
+  const res = await fetch("https://api.dropboxapi.com/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!res.ok) throw new Error("Token exchange failed: " + res.status);
+  const data = await res.json();
+  sessionStorage.removeItem("dbx_verifier");
+  // Token held in memory + sessionStorage only (clears when browser/app fully closed)
+  const token = { access_token: data.access_token, obtained: Date.now() };
+  sessionStorage.setItem("dbx_token", JSON.stringify(token));
+  return token;
+}
+
+function dbxGetToken() {
+  try {
+    const raw = sessionStorage.getItem("dbx_token");
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function dbxClearToken() {
+  sessionStorage.removeItem("dbx_token");
+}
+
+// Create a folder (ignore "already exists" errors)
+async function dbxCreateFolder(path) {
+  const token = dbxGetToken();
+  if (!token) throw new Error("Not connected to Dropbox");
+  const res = await fetch("https://api.dropboxapi.com/2/files/create_folder_v2", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token.access_token,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ path, autorename: false }),
+  });
+  if (res.ok) return await res.json();
+  const err = await res.json().catch(() => ({}));
+  // 409 conflict = folder already exists, which is fine
+  if (err && err.error_summary && err.error_summary.startsWith("path/conflict")) return null;
+  throw new Error("Folder create failed: " + (err.error_summary || res.status));
+}
+
+// Upload a file (content can be a Blob or string)
+async function dbxUpload(path, content) {
+  const token = dbxGetToken();
+  if (!token) throw new Error("Not connected to Dropbox");
+  const res = await fetch("https://content.dropboxapi.com/2/files/upload", {
+    method: "POST",
+    headers: {
+      "Authorization": "Bearer " + token.access_token,
+      "Content-Type": "application/octet-stream",
+      "Dropbox-API-Arg": JSON.stringify({ path, mode: "overwrite", autorename: false, mute: true }),
+    },
+    body: content,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error("Upload failed: " + err.slice(0, 120));
+  }
+  return await res.json();
+}
+
+// App-folder access: paths are relative to the app's dedicated folder, so we
+// just use "/ParentFolder/SUBFOLDER/file". Dropbox scopes it automatically.
+function dbxProjectPaths(parentFolder) {
+  const safe = (parentFolder || "FieldSurvey").replace(/[^A-Za-z0-9 _-]/g, "").trim() || "FieldSurvey";
+  return {
+    parent: "/" + safe,
+    data: "/" + safe + "/DATA",
+    photos: "/" + safe + "/PHOTOS",
+  };
+}
+
 
 // ---------- Helpers ----------
 function uid() {
@@ -84,39 +223,93 @@ function pad3(n) {
   return String(n).padStart(3, "0");
 }
 
-function playDing() {
+// Compass bearing from point 1 to point 2, in degrees (0=N, 90=E, 180=S, 270=W)
+function bearingDegrees(lat1, lon1, lat2, lon2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const toDeg = (r) => (r * 180) / Math.PI;
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLon);
+  let brng = toDeg(Math.atan2(y, x));
+  return (brng + 360) % 360;
+}
+
+// Convert a bearing in degrees to a compass label like "NE" or "SSW"
+function compassLabel(deg) {
+  const dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+// Shared audio context (created lazily on first user interaction)
+let _audioCtx = null;
+function getAudioCtx() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    return _audioCtx;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Bright, quick single ding — used when the Mark Waypoint button is pressed.
+function playWaypointDing() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(1320, ctx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.08);
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + 0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.22);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.24);
+}
+
+// Two-tone alert chime — used for proximity detection.
+function playProximityChime() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const tone = (freq, start, dur, peak) => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = "sine";
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.3, ctx.currentTime + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+    osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+    gain.gain.exponentialRampToValueAtTime(peak, ctx.currentTime + start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
     osc.connect(gain);
     gain.connect(ctx.destination);
-    osc.start();
-    osc.stop(ctx.currentTime + 0.55);
-    // second chime
-    setTimeout(() => {
-      const ctx2 = new (window.AudioContext || window.webkitAudioContext)();
-      const osc2 = ctx2.createOscillator();
-      const gain2 = ctx2.createGain();
-      osc2.type = "sine";
-      osc2.frequency.setValueAtTime(1180, ctx2.currentTime);
-      gain2.gain.setValueAtTime(0.0001, ctx2.currentTime);
-      gain2.gain.exponentialRampToValueAtTime(0.25, ctx2.currentTime + 0.02);
-      gain2.gain.exponentialRampToValueAtTime(0.0001, ctx2.currentTime + 0.4);
-      osc2.connect(gain2);
-      gain2.connect(ctx2.destination);
-      osc2.start();
-      osc2.stop(ctx2.currentTime + 0.45);
-    }, 150);
-  } catch (e) {
-    // audio not available, ignore
-  }
+    osc.start(ctx.currentTime + start);
+    osc.stop(ctx.currentTime + start + dur + 0.02);
+  };
+  tone(880, 0, 0.45, 0.3);
+  tone(1180, 0.15, 0.4, 0.25);
 }
+
+// Soft, almost haptic-like tick — used for general button presses.
+function playSoftTick() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(180, ctx.currentTime);
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.06);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.07);
+}
+
 
 async function storageGet(key, fallback) {
   try {
@@ -139,16 +332,48 @@ async function storageSet(key, value) {
 
 // ---------- Main App ----------
 function FieldSurveyApp() {
-  const [view, setView] = useState("projects"); // projects, projectSetup, capture, waypointList, map, export, waypointEdit
+  const [view, setView] = useState("projects"); // projects, templates, capture, waypointList, map, settings, export, findWaypoint
   const [monitoring, setMonitoring] = useState(true);
   const [projects, setProjects] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [activeProjectId, setActiveProjectId] = useState(null);
+  const [findTargetId, setFindTargetId] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [dbxConnected, setDbxConnected] = useState(!!dbxGetToken());
+
+  // Handle return from Dropbox OAuth (URL will contain ?code=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    if (code) {
+      (async () => {
+        try {
+          await dbxCompleteLogin(code);
+          setDbxConnected(true);
+        } catch (e) {
+          console.warn("Dropbox login failed", e);
+          alert("Dropbox connection failed. Please try connecting again.");
+        }
+        // Clean the ?code= out of the URL and restore where the user was
+        window.history.replaceState({}, document.title, window.location.pathname);
+        const ret = sessionStorage.getItem("dbx_return");
+        if (ret) {
+          try {
+            const r = JSON.parse(ret);
+            if (r.projectId) { setActiveProjectId(r.projectId); setView(r.view || "settings"); }
+          } catch (e) {}
+          sessionStorage.removeItem("dbx_return");
+        }
+      })();
+    }
+  }, []);
 
   useEffect(() => {
     (async () => {
       const p = await storageGet("projects:index", []);
       setProjects(p);
+      const t = await storageGet("templates:index", []);
+      setTemplates(t);
       setLoaded(true);
     })();
   }, []);
@@ -156,6 +381,10 @@ function FieldSurveyApp() {
   useEffect(() => {
     if (loaded) storageSet("projects:index", projects);
   }, [projects, loaded]);
+
+  useEffect(() => {
+    if (loaded) storageSet("templates:index", templates);
+  }, [templates, loaded]);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
@@ -180,10 +409,19 @@ function FieldSurveyApp() {
         <ProjectsScreen
           projects={projects}
           setProjects={setProjects}
+          templates={templates}
           onOpen={(id) => {
             setActiveProjectId(id);
             setView("capture");
           }}
+          onNav={setView}
+        />
+      )}
+      {view === "templates" && (
+        <TemplatesScreen
+          templates={templates}
+          setTemplates={setTemplates}
+          onBack={() => setView("projects")}
         />
       )}
       {view === "capture" && activeProject && (
@@ -194,6 +432,7 @@ function FieldSurveyApp() {
           onNav={setView}
           monitoring={monitoring}
           setMonitoring={setMonitoring}
+          setFindTargetId={setFindTargetId}
         />
       )}
       {view === "waypointList" && activeProject && (
@@ -207,11 +446,20 @@ function FieldSurveyApp() {
       {view === "map" && activeProject && (
         <MapScreen project={activeProject} onBack={() => setView("capture")} />
       )}
+      {view === "findWaypoint" && activeProject && (
+        <FindWaypointScreen
+          project={activeProject}
+          initialWaypointId={findTargetId}
+          onBack={() => { setFindTargetId(null); setView("capture"); }}
+        />
+      )}
       {view === "settings" && activeProject && (
         <SettingsScreen
           project={activeProject}
           updateProject={(patch) => updateProject(activeProject.id, patch)}
           onBack={() => setView("capture")}
+          dbxConnected={dbxConnected}
+          setDbxConnected={setDbxConnected}
         />
       )}
       {view === "export" && activeProject && (
@@ -310,10 +558,10 @@ function LocationBadge({ num, size = 36 }) {
   );
 }
 
-function PrimaryButton({ children, onClick, style, disabled, icon }) {
+function PrimaryButton({ children, onClick, style, disabled, icon, silent }) {
   return (
     <button
-      onClick={onClick}
+      onClick={(e) => { if (!silent) playSoftTick(); onClick && onClick(e); }}
       disabled={disabled}
       style={{
         background: disabled ? "#9a8a6f" : COLORS.rust,
@@ -337,14 +585,15 @@ function PrimaryButton({ children, onClick, style, disabled, icon }) {
   );
 }
 
-function SecondaryButton({ children, onClick, style, icon }) {
+function SecondaryButton({ children, onClick, style, icon, silent, disabled }) {
   return (
     <button
-      onClick={onClick}
+      onClick={(e) => { if (!silent) playSoftTick(); onClick && onClick(e); }}
+      disabled={disabled}
       style={{
         background: COLORS.card,
-        color: COLORS.ink,
-        border: `2px solid ${COLORS.ink}`,
+        color: disabled ? "#9a8a6f" : COLORS.ink,
+        border: `2px solid ${disabled ? "#9a8a6f" : COLORS.ink}`,
         borderRadius: 10,
         padding: "14px 18px",
         fontWeight: 700,
@@ -363,25 +612,33 @@ function SecondaryButton({ children, onClick, style, icon }) {
 }
 
 // ---------- Projects Screen ----------
-function ProjectsScreen({ projects, setProjects, onOpen }) {
+function ProjectsScreen({ projects, setProjects, templates, onOpen, onNav }) {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState(""); // "" = blank
   const [confirmDelete, setConfirmDelete] = useState(null); // project id to delete
 
   function createProject() {
     if (!name.trim()) return;
+    const tpl = templates.find((t) => t.id === selectedTemplateId);
+    // Deep-copy template fields so later template edits don't affect this project
+    const copiedFields = tpl
+      ? tpl.customFields.map((f) => ({ ...f, id: uid(), options: [...(f.options || [])] }))
+      : [];
     const p = {
       id: uid(),
       name: name.trim(),
       createdAt: new Date().toISOString(),
       nextLocationNum: 1,
       nextPhotoNum: 1,
-      proximityThresholdFeet: 20,
-      customFields: [], // {id, label, type: 'text'|'dropdown', options: []}
+      proximityThresholdFeet: tpl ? tpl.proximityThresholdFeet : 20,
+      dropboxParentFolder: tpl && tpl.dropboxParentFolder ? tpl.dropboxParentFolder : "",
+      customFields: copiedFields,
       waypoints: [], // {id, locationNum, description, lat, lon, photoRef, customValues: {fieldId: value}, createdAt}
     };
     setProjects((prev) => [...prev, p]);
     setName("");
+    setSelectedTemplateId("");
     setCreating(false);
     onOpen(p.id);
   }
@@ -406,11 +663,31 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
           lineHeight: 1.7,
         }}>
           <div style={{ fontWeight: 800, color: COLORS.ink, marginBottom: 6, fontSize: 14 }}>HOW TO GET STARTED</div>
-          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>1.</span> Tap <strong>New Project</strong> and give it a name.</div>
-          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>2.</span> Once inside, tap the <strong>⚙ gear icon</strong> to set your custom fields and proximity distance.</div>
+          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>1.</span> Tap <strong>New Project</strong>, name it, and optionally start from a saved <strong>Template</strong>.</div>
+          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>2.</span> Once inside, tap <strong>Project Setup</strong> (top right) to set custom fields, proximity distance, and Dropbox folder.</div>
           <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>3.</span> Tap <strong>Mark Waypoint</strong> to record your GPS location and fill in attributes.</div>
           <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>4.</span> When done for the day, tap <strong>Export Data</strong>, then <strong>Conclude Session</strong>.</div>
+          <div style={{ marginTop: 6 }}><span style={{ color: COLORS.rust, fontWeight: 700 }}>Tip:</span> Use <strong>Templates</strong> (below) to preset fields you collect on every project.</div>
         </div>
+        <button
+          onClick={() => onNav("templates")}
+          style={{
+            width: "100%",
+            background: COLORS.card,
+            border: `2px solid ${COLORS.ink}`,
+            borderRadius: 10,
+            padding: "12px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            fontWeight: 700,
+            color: COLORS.ink,
+            marginBottom: 16,
+          }}
+        >
+          <LayoutTemplate size={18} /> Manage Templates
+        </button>
         <div style={{ fontSize: 13, color: COLORS.inkSoft, marginBottom: 14, fontWeight: 600 }}>
           PROJECTS
         </div>
@@ -480,6 +757,21 @@ function ProjectsScreen({ projects, setProjects, onOpen }) {
               style={inputStyle}
               onKeyDown={(e) => e.key === "Enter" && createProject()}
             />
+            {templates.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <label style={labelStyle}>Start from template (optional)</label>
+                <select
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                  style={{ ...inputStyle, appearance: "none" }}
+                >
+                  <option value="">Blank project</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
               <SecondaryButton onClick={() => setCreating(false)} style={{ flex: 1 }}>
                 Cancel
@@ -543,8 +835,231 @@ const inputStyle = {
   color: COLORS.ink,
 };
 
+// ---------- Templates Screen ----------
+function TemplatesScreen({ templates, setTemplates, onBack }) {
+  const [editingId, setEditingId] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const editing = editingId === "new"
+    ? { id: "new", name: "", proximityThresholdFeet: 20, dropboxParentFolder: "", customFields: [] }
+    : templates.find((t) => t.id === editingId);
+
+  function saveTemplate(tpl) {
+    if (tpl.id === "new") {
+      setTemplates((prev) => [...prev, { ...tpl, id: uid() }]);
+    } else {
+      setTemplates((prev) => prev.map((t) => (t.id === tpl.id ? tpl : t)));
+    }
+    setEditingId(null);
+  }
+
+  function deleteTemplate(id) {
+    setTemplates((prev) => prev.filter((t) => t.id !== id));
+    setConfirmDelete(null);
+  }
+
+  if (editing) {
+    return <TemplateEditor template={editing} onSave={saveTemplate} onCancel={() => setEditingId(null)} />;
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Templates" onBack={onBack} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+        <div style={{
+          background: COLORS.card,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 12,
+          padding: 14,
+          marginBottom: 16,
+          fontSize: 13,
+          color: COLORS.inkSoft,
+          lineHeight: 1.6,
+        }}>
+          A template presets project settings — custom attribute fields, proximity distance, and Dropbox folder convention — so new projects start ready to go. Creating a project from a template copies its settings; later template edits won't change existing projects.
+        </div>
+
+        {templates.length === 0 && (
+          <div style={{
+            background: COLORS.card,
+            border: `2px dashed ${COLORS.line}`,
+            borderRadius: 12,
+            padding: 28,
+            textAlign: "center",
+            color: COLORS.inkSoft,
+            marginBottom: 16,
+          }}>
+            No templates yet. Create one to preset your common project settings.
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+          {templates.map((t) => (
+            <div key={t.id} style={{
+              background: COLORS.card,
+              borderRadius: 12,
+              padding: 16,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              border: `1px solid ${COLORS.line}`,
+            }}>
+              <div onClick={() => setEditingId(t.id)} style={{ flex: 1, cursor: "pointer" }}>
+                <div style={{ fontWeight: 800, fontSize: 17 }}>{t.name}</div>
+                <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 2 }}>
+                  {t.customFields.length} field{t.customFields.length !== 1 ? "s" : ""} · {t.proximityThresholdFeet} ft proximity
+                </div>
+              </div>
+              <button onClick={() => setEditingId(t.id)} style={{ background: "none", border: "none", color: COLORS.ink, padding: 6 }}>
+                <Edit3 size={18} />
+              </button>
+              <button onClick={() => setConfirmDelete(t.id)} style={{ background: "none", border: "none", color: COLORS.rust, padding: 6 }}>
+                <Trash2 size={18} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={() => setEditingId("new")}
+          style={{
+            width: "100%",
+            background: "none",
+            border: `2px solid ${COLORS.ink}`,
+            borderRadius: 10,
+            padding: "14px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            fontWeight: 700,
+            color: COLORS.ink,
+          }}
+        >
+          <Plus size={20} /> New Template
+        </button>
+      </div>
+      {confirmDelete && (
+        <ConfirmDialog
+          message="This will permanently delete this template. Projects already created from it are not affected."
+          confirmLabel="Delete Template"
+          onConfirm={() => deleteTemplate(confirmDelete)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function TemplateEditor({ template, onSave, onCancel }) {
+  const [name, setName] = useState(template.name);
+  const [threshold, setThreshold] = useState(template.proximityThresholdFeet);
+  const [dropboxFolder, setDropboxFolder] = useState(template.dropboxParentFolder || "");
+  const [fields, setFields] = useState(template.customFields);
+  const [addingField, setAddingField] = useState(false);
+
+  function deleteField(id) {
+    setFields((prev) => prev.filter((f) => f.id !== id));
+  }
+
+  function save() {
+    if (!name.trim()) return;
+    onSave({
+      ...template,
+      name: name.trim(),
+      proximityThresholdFeet: threshold === 0 ? 0 : (threshold || 20),
+      dropboxParentFolder: dropboxFolder.trim(),
+      customFields: fields,
+    });
+  }
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title={template.id === "new" ? "New Template" : "Edit Template"} onBack={onCancel} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
+        <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
+          <label style={labelStyle}>Template name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Restroom Hardware Survey" style={inputStyle} />
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>Proximity alert distance (feet)</label>
+          <input
+            type="number"
+            value={threshold === 0 ? "" : threshold}
+            onChange={(e) => { const raw = e.target.value; setThreshold(raw === "" ? 0 : Math.max(0, Number(raw))); }}
+            placeholder="e.g. 20"
+            style={inputStyle}
+          />
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>Dropbox parent folder name (optional)</label>
+          <input value={dropboxFolder} onChange={(e) => setDropboxFolder(e.target.value)} placeholder="e.g. RestroomSurveys" style={inputStyle} />
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6 }}>
+            Projects from this template will suggest this Dropbox parent folder. DATA and PHOTOS subfolders are created inside it.
+          </div>
+        </div>
+
+        <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700, marginBottom: 10 }}>
+          CUSTOM ATTRIBUTE FIELDS
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+          {fields.map((f) => (
+            <div key={f.id} style={{
+              background: COLORS.card,
+              borderRadius: 10,
+              padding: 12,
+              border: `1px solid ${COLORS.line}`,
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}>
+              <div>
+                <div style={{ fontWeight: 700 }}>{f.label}</div>
+                <div style={{ fontSize: 12, color: COLORS.inkSoft }}>
+                  {f.type === "dropdown" ? `Dropdown: ${f.options.join(", ")}` : "Text field"}
+                </div>
+              </div>
+              <button onClick={() => deleteField(f.id)} style={{ background: "none", border: "none", color: COLORS.rust, padding: 6 }}>
+                <Trash2 size={18} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {addingField ? (
+          <NewFieldForm
+            onCancel={() => setAddingField(false)}
+            onAdd={(field) => { setFields((prev) => [...prev, field]); setAddingField(false); }}
+          />
+        ) : (
+          <button
+            onClick={() => setAddingField(true)}
+            style={{
+              width: "100%",
+              background: "none",
+              border: `2px solid ${COLORS.ink}`,
+              borderRadius: 10,
+              padding: 14,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              fontWeight: 700,
+              color: COLORS.ink,
+            }}
+          >
+            <Plus size={18} /> Add Custom Field
+          </button>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
+        <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>Cancel</SecondaryButton>
+        <PrimaryButton onClick={save} style={{ flex: 1 }} icon={<Check size={18} />}>Save Template</PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
 // ---------- Capture Screen (main hub for a project) ----------
-function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setMonitoring }) {
+function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setMonitoring, setFindTargetId }) {
   const [gettingLoc, setGettingLoc] = useState(false);
   const [pendingWaypoint, setPendingWaypoint] = useState(null); // {lat, lon, locationNum}
   const [proximityAlert, setProximityAlert] = useState(null); // waypoint object
@@ -564,7 +1079,7 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
             const now = Date.now();
             if (now - lastAlert > 60000) {
               alertedRecentlyRef.current[wp.id] = now;
-              playDing();
+              playProximityChime();
               setProximityAlert(wp);
             }
           }
@@ -578,6 +1093,7 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
   }, [monitoring, project.waypoints, project.proximityThresholdFeet]);
 
   function markLocation() {
+    playWaypointDing();
     setGettingLoc(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -688,7 +1204,14 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
             Relative Point Map
           </SecondaryButton>
         </div>
-        <PrimaryButton onClick={() => onNav("export")} icon={<Download size={18} />} style={{ background: COLORS.ink, boxShadow: "0 2px 0 #182019" }}>
+        <SecondaryButton
+          onClick={() => { setFindTargetId(null); onNav("findWaypoint"); }}
+          icon={<Navigation size={18} />}
+          disabled={project.waypoints.length === 0}
+        >
+          Find Waypoint
+        </SecondaryButton>
+        <PrimaryButton onClick={() => onNav("export")} icon={<Upload size={18} />} style={{ background: COLORS.ink, boxShadow: "0 2px 0 #182019" }}>
           Export Data
         </PrimaryButton>
         <SecondaryButton
@@ -716,6 +1239,12 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
             setProximityAlert(null);
             onNav("waypointList");
           }}
+          onPointTo={() => {
+            const wpId = proximityAlert.id;
+            setProximityAlert(null);
+            setFindTargetId(wpId);
+            onNav("findWaypoint");
+          }}
           onNo={() => setProximityAlert(null)}
         />
       )}
@@ -731,14 +1260,57 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
     project.customFields.forEach((f) => (init[f.id] = ""));
     return init;
   });
-  // Auto-assign next sequential photo reference for this project
-  const autoRef = `Pic${String(project.nextPhotoNum || 1).padStart(3, "0")}`;
-  const [photoRef, setPhotoRef] = useState(null); // null = no photo; string = reference assigned
-  const [showPhotoPrompt, setShowPhotoPrompt] = useState(false);
+  // Auto-assign next sequential photo name for this project
+  const autoName = `Pic${String(project.nextPhotoNum || 1).padStart(3, "0")}`;
+  const [photoRef, setPhotoRef] = useState(null);   // filename stored once captured/uploaded
+  const [uploadState, setUploadState] = useState("idle"); // idle | uploading | done | queued | error
+  const [uploadMsg, setUploadMsg] = useState("");
+  const fileInputRef = useRef(null);
 
-  function assignPhotoRef() {
-    setPhotoRef(autoRef);
-    setShowPhotoPrompt(true);
+  const dbxConnected = !!dbxGetToken();
+
+  function openCamera() {
+    if (fileInputRef.current) fileInputRef.current.click();
+  }
+
+  async function handlePhotoFile(e) {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // allow re-pick
+    if (!file) return;
+    const filename = `${autoName}.jpg`;
+    const folder = project.dropboxParentFolder || "";
+
+    if (!dbxConnected) {
+      // No Dropbox connection — record the reference name but can't upload
+      setPhotoRef(filename);
+      setUploadState("error");
+      setUploadMsg("Not connected to Dropbox — name recorded, but photo not uploaded. Connect Dropbox in Project Setup, then retake.");
+      return;
+    }
+    if (!folder) {
+      setPhotoRef(filename);
+      setUploadState("error");
+      setUploadMsg("No Dropbox folder set for this project. Set one in Project Setup, then retake.");
+      return;
+    }
+
+    setUploadState("uploading");
+    setUploadMsg("Uploading to Dropbox…");
+    try {
+      const paths = dbxProjectPaths(folder);
+      // Ensure folders exist (cheap if already there)
+      await dbxCreateFolder(paths.parent);
+      await dbxCreateFolder(paths.photos);
+      await dbxUpload(`${paths.photos}/${filename}`, file);
+      setPhotoRef(filename);
+      setUploadState("done");
+      setUploadMsg(`Uploaded to ${paths.photos}/${filename}`);
+    } catch (err) {
+      // Queue for later if upload fails (e.g. no signal)
+      setPhotoRef(filename);
+      setUploadState("queued");
+      setUploadMsg("Upload failed (no connection?). Name recorded; you can retake when back in range.");
+    }
   }
 
   function handleSave() {
@@ -748,7 +1320,6 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
       lat: waypoint.lat,
       lon: waypoint.lon,
       photoRef,
-      // Only increment the project photo counter if a reference was actually assigned
       _incrementPhoto: photoRef !== null,
       customValues,
     });
@@ -768,7 +1339,7 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
         </div>
 
         <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
-          <label style={labelStyle}>Description</label>
+          <label style={labelStyle}>Notes</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, 200))}
@@ -802,37 +1373,39 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
           ))}
 
           <div style={{ marginTop: 16 }}>
-            <label style={labelStyle}>Photo Reference</label>
+            <label style={labelStyle}>Photo</label>
             {photoRef ? (
               <div style={{
-                background: "#DCE8D5",
-                border: `1.5px solid #6B8F5C`,
+                background: uploadState === "done" ? "#DCE8D5" : (uploadState === "uploading" ? "#FBEFD6" : "#FBE3D6"),
+                border: `1.5px solid ${uploadState === "done" ? "#6B8F5C" : COLORS.line}`,
                 borderRadius: 10,
                 padding: "14px 16px",
               }}>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 800, fontSize: 16, color: COLORS.ink, fontFamily: "ui-monospace, monospace", marginBottom: 4 }}>{photoRef}</div>
-                    <div style={{ fontSize: 12, color: COLORS.inkSoft, marginBottom: 8 }}>Reference assigned — match to your Camera Roll photo</div>
-                    <input
-                      value={photoRef}
-                      onChange={(e) => setPhotoRef(e.target.value)}
-                      style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", fontWeight: 700 }}
-                      placeholder="e.g. Pic001"
-                    />
+                    <div style={{ fontSize: 12, color: COLORS.inkSoft }}>{uploadMsg}</div>
                   </div>
                   <button
-                    onClick={() => setPhotoRef(null)}
+                    onClick={() => { setPhotoRef(null); setUploadState("idle"); setUploadMsg(""); }}
                     style={{ background: "none", border: "none", color: COLORS.rust, padding: 6, flexShrink: 0 }}
-                    aria-label="Remove photo reference"
+                    aria-label="Remove photo"
                   >
                     <X size={18} />
                   </button>
                 </div>
+                {(uploadState === "error" || uploadState === "queued") && (
+                  <button onClick={openCamera} style={{
+                    marginTop: 10, width: "100%", background: COLORS.rust, color: "#fff",
+                    border: "none", borderRadius: 8, padding: "10px", fontWeight: 700, fontSize: 13,
+                  }}>
+                    Retake & Upload
+                  </button>
+                )}
               </div>
             ) : (
               <button
-                onClick={assignPhotoRef}
+                onClick={openCamera}
                 style={{
                   width: "100%",
                   border: `2px dashed ${COLORS.line}`,
@@ -847,52 +1420,27 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
                 }}
               >
                 <Camera size={28} />
-                <span style={{ fontWeight: 600, fontSize: 14 }}>Log Photo Reference</span>
+                <span style={{ fontWeight: 600, fontSize: 14 }}>Take Photo</span>
                 <span style={{ fontSize: 12, color: COLORS.inkSoft, textAlign: "center" }}>
-                  Assigns next reference ({autoRef}) and prompts you to take the photo.
+                  Opens your camera, then uploads to Dropbox as {autoName}.jpg
                 </span>
               </button>
             )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handlePhotoFile}
+              style={{ display: "none" }}
+            />
+            {!dbxConnected && (
+              <div style={{ fontSize: 12, color: COLORS.rust, marginTop: 8 }}>
+                Dropbox not connected. Connect it in Project Setup to enable photo upload.
+              </div>
+            )}
           </div>
         </div>
-
-        {showPhotoPrompt && (
-          <div style={{ ...modalOverlayStyleBase(), alignItems: "center" }}>
-            <div style={{
-              background: COLORS.card,
-              borderRadius: 16,
-              padding: 24,
-              width: "88%",
-              maxWidth: 360,
-              textAlign: "center",
-              border: `3px solid ${COLORS.rust}`,
-              boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
-            }}>
-              <Camera size={36} color={COLORS.rust} style={{ marginBottom: 10 }} />
-              <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.ink, marginBottom: 8 }}>
-                Go Take Your Photo Now
-              </div>
-              <div style={{ fontSize: 15, color: COLORS.inkSoft, lineHeight: 1.6, marginBottom: 6 }}>
-                Switch to your <strong>Camera app</strong> and take the photo. Come back when done.
-              </div>
-              <div style={{
-                fontFamily: "ui-monospace, monospace",
-                fontWeight: 800,
-                fontSize: 28,
-                color: COLORS.rust,
-                background: "#F3E4D8",
-                borderRadius: 10,
-                padding: "10px 0",
-                marginBottom: 20,
-              }}>
-                {photoRef}
-              </div>
-              <PrimaryButton onClick={() => setShowPhotoPrompt(false)} style={{ width: "100%" }}>
-                Done — Back to Waypoint
-              </PrimaryButton>
-            </div>
-          </div>
-        )}
 
         <div style={{ display: "flex", gap: 10, padding: 16, borderTop: `1px solid ${COLORS.line}` }}>
           <SecondaryButton onClick={onCancel} style={{ flex: 1 }}>
@@ -1024,7 +1572,7 @@ function ConfirmDialog({ message, confirmLabel = "Delete", onConfirm, onCancel }
 }
 
 // ---------- Proximity Alert Modal ----------
-function ProximityAlertModal({ waypoint, onYes, onNo }) {
+function ProximityAlertModal({ waypoint, onYes, onNo, onPointTo }) {
   return (
     <div style={{ ...modalOverlayStyleBase(), alignItems: "center" }}>
       <div
@@ -1046,7 +1594,7 @@ function ProximityAlertModal({ waypoint, onYes, onNo }) {
         <div style={{ color: "#fff", fontSize: 14, marginBottom: 18, opacity: 0.95 }}>
           Would you like to edit its attribute group?
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
           <button
             onClick={onNo}
             style={{
@@ -1073,9 +1621,27 @@ function ProximityAlertModal({ waypoint, onYes, onNo }) {
               fontWeight: 700,
             }}
           >
-            Yes
+            Yes, Edit
           </button>
         </div>
+        <button
+          onClick={onPointTo}
+          style={{
+            width: "100%",
+            background: "rgba(0,0,0,0.18)",
+            border: "2px solid #fff",
+            color: "#fff",
+            borderRadius: 10,
+            padding: "12px",
+            fontWeight: 700,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+          }}
+        >
+          <Navigation size={16} /> Point Me To It
+        </button>
       </div>
     </div>
   );
@@ -1146,7 +1712,7 @@ function WaypointListScreen({ project, updateProject, onBack, onNav }) {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <LocationBadge num={pad3(wp.locationNum)} size={26} />
                     <span style={{ fontWeight: 700, fontSize: 14 }}>
-                      {wp.description || <em style={{ color: COLORS.inkSoft }}>No description</em>}
+                      {wp.description || <em style={{ color: COLORS.inkSoft }}>No notes</em>}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: COLORS.inkSoft, fontFamily: "ui-monospace, monospace", marginTop: 4 }}>
@@ -1211,7 +1777,7 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
           </div>
         </div>
         <div style={{ padding: 16, overflowY: "auto", flex: 1 }}>
-          <label style={labelStyle}>Description</label>
+          <label style={labelStyle}>Notes</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, 200))}
@@ -1315,6 +1881,200 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
   );
 }
 
+// ---------- Find / Navigate to Waypoint Screen ----------
+function FindWaypointScreen({ project, initialWaypointId, onBack }) {
+  const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
+  const [targetId, setTargetId] = useState(initialWaypointId || (sorted[0] && sorted[0].id) || null);
+  const [pos, setPos] = useState(null); // {lat, lon}
+  const [heading, setHeading] = useState(null); // device compass heading in degrees, or null
+  const [compassMode, setCompassMode] = useState("unknown"); // unknown | live | assumed
+  const watchRef = useRef(null);
+
+  const target = project.waypoints.find((w) => w.id === targetId);
+
+  // Live GPS position
+  useEffect(() => {
+    if (!("geolocation" in navigator)) return;
+    const id = navigator.geolocation.watchPosition(
+      (p) => setPos({ lat: p.coords.latitude, lon: p.coords.longitude }),
+      (e) => console.warn("geo error", e),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 12000 }
+    );
+    watchRef.current = id;
+    return () => navigator.geolocation.clearWatch(id);
+  }, []);
+
+  // Device compass (best-effort; falls back to "assumed north")
+  useEffect(() => {
+    function handleOrientation(e) {
+      let h = null;
+      if (typeof e.webkitCompassHeading === "number") {
+        h = e.webkitCompassHeading; // iOS gives true heading here
+      } else if (e.alpha != null) {
+        h = 360 - e.alpha; // approximate for other browsers
+      }
+      if (h != null && !isNaN(h)) {
+        setHeading(h);
+        setCompassMode("live");
+      }
+    }
+    window.addEventListener("deviceorientation", handleOrientation, true);
+    // If no compass event arrives shortly, fall back to assumed-north mode
+    const fallbackTimer = setTimeout(() => {
+      setCompassMode((m) => (m === "live" ? m : "assumed"));
+    }, 2500);
+    return () => {
+      window.removeEventListener("deviceorientation", handleOrientation, true);
+      clearTimeout(fallbackTimer);
+    };
+  }, []);
+
+  function requestCompass() {
+    // iOS 13+ requires explicit permission for orientation
+    if (typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().catch(() => {});
+    }
+  }
+
+  const dist = pos && target ? haversineFeet(pos.lat, pos.lon, target.lat, target.lon) : null;
+  const brng = pos && target ? bearingDegrees(pos.lat, pos.lon, target.lat, target.lon) : null;
+  // Arrow rotation: if live compass available, subtract heading so arrow points
+  // relative to where the phone is actually facing. Otherwise assume top = north.
+  const effectiveHeading = compassMode === "live" && heading != null ? heading : 0;
+  const arrowRotation = brng != null ? brng - effectiveHeading : 0;
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <TopBar title="Find Waypoint" onBack={onBack} />
+      <div style={{ padding: 16, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {sorted.length === 0 ? (
+          <div style={{ textAlign: "center", color: COLORS.inkSoft, marginTop: 40 }}>
+            No waypoints recorded yet.
+          </div>
+        ) : (
+          <>
+            <div>
+              <label style={labelStyle}>Target waypoint</label>
+              <select
+                value={targetId || ""}
+                onChange={(e) => setTargetId(e.target.value)}
+                style={{ ...inputStyle, appearance: "none" }}
+              >
+                {sorted.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    Location {pad3(w.locationNum)}{w.description ? ` — ${w.description.slice(0, 30)}` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Compass / direction display */}
+            <div style={{
+              background: COLORS.card,
+              border: `1px solid ${COLORS.line}`,
+              borderRadius: 16,
+              padding: 24,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 12,
+            }}>
+              <div style={{
+                width: 180,
+                height: 180,
+                borderRadius: "50%",
+                border: `3px solid ${COLORS.line}`,
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                background: COLORS.bg,
+              }}>
+                {/* N marker */}
+                <div style={{ position: "absolute", top: 6, fontSize: 12, fontWeight: 800, color: COLORS.inkSoft }}>N</div>
+                <div style={{ position: "absolute", bottom: 6, fontSize: 11, color: COLORS.inkSoft }}>S</div>
+                <div style={{ position: "absolute", left: 8, fontSize: 11, color: COLORS.inkSoft }}>W</div>
+                <div style={{ position: "absolute", right: 8, fontSize: 11, color: COLORS.inkSoft }}>E</div>
+                {/* Arrow */}
+                <div style={{
+                  transform: `rotate(${arrowRotation}deg)`,
+                  transition: "transform 0.3s ease-out",
+                  width: 0,
+                  height: 0,
+                }}>
+                  <div style={{
+                    width: 0, height: 0,
+                    borderLeft: "18px solid transparent",
+                    borderRight: "18px solid transparent",
+                    borderBottom: `70px solid ${COLORS.rust}`,
+                    transform: "translateY(-35px)",
+                  }} />
+                </div>
+              </div>
+
+              {dist != null ? (
+                <>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: COLORS.ink, fontFamily: "ui-monospace, monospace" }}>
+                    {dist < 1000 ? `${Math.round(dist)} ft` : `${(dist / 5280).toFixed(2)} mi`}
+                  </div>
+                  <div style={{ fontSize: 16, color: COLORS.inkSoft }}>
+                    Bearing <strong style={{ color: COLORS.rust }}>{Math.round(brng)}° {compassLabel(brng)}</strong>
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: COLORS.inkSoft, fontSize: 14 }}>Acquiring your location…</div>
+              )}
+            </div>
+
+            {/* Compass mode note */}
+            {compassMode === "assumed" && (
+              <div style={{
+                background: "#FBEFD6",
+                border: `1.5px solid ${COLORS.amber}`,
+                borderRadius: 10,
+                padding: "12px 14px",
+                fontSize: 13,
+                color: COLORS.ink,
+                lineHeight: 1.5,
+              }}>
+                <strong>Compass not available — assuming phone points north.</strong> Keep the top of your phone pointed north (use your device Compass app or an analog compass), and the arrow will point true toward the waypoint.
+                <button onClick={requestCompass} style={{
+                  display: "block", marginTop: 8, background: COLORS.amber, color: "#fff",
+                  border: "none", borderRadius: 8, padding: "8px 12px", fontWeight: 700, fontSize: 13,
+                }}>
+                  Try enabling live compass
+                </button>
+              </div>
+            )}
+            {compassMode === "live" && (
+              <div style={{
+                background: "#DCE8D5",
+                border: `1.5px solid #6B8F5C`,
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontSize: 13,
+                color: "#2E4427",
+              }}>
+                ● Live compass active — point your phone and follow the arrow.
+              </div>
+            )}
+            {compassMode === "unknown" && (
+              <button onClick={requestCompass} style={{
+                background: COLORS.card, border: `2px solid ${COLORS.ink}`, borderRadius: 10,
+                padding: "12px", fontWeight: 700, color: COLORS.ink,
+              }}>
+                Enable Compass
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---------- Map Screen ----------
 function MapScreen({ project, onBack }) {
   const waypoints = project.waypoints;
@@ -1399,10 +2159,13 @@ function MapScreen({ project, onBack }) {
 }
 
 // ---------- Settings Screen ----------
-function SettingsScreen({ project, updateProject, onBack }) {
+function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxConnected }) {
   const [fields, setFields] = useState(project.customFields);
   const [threshold, setThreshold] = useState(project.proximityThresholdFeet);
   const [addingField, setAddingField] = useState(false);
+  const [dropboxFolder, setDropboxFolder] = useState(project.dropboxParentFolder || "");
+  const [dbxBusy, setDbxBusy] = useState(false);
+  const [dbxMessage, setDbxMessage] = useState("");
 
   function persistFields(newFields) {
     setFields(newFields);
@@ -1413,9 +2176,43 @@ function SettingsScreen({ project, updateProject, onBack }) {
     persistFields(fields.filter((f) => f.id !== id));
   }
 
+  async function connectDropbox() {
+    // Save folder name and where to return after the Dropbox redirect
+    updateProject({ dropboxParentFolder: dropboxFolder.trim() });
+    sessionStorage.setItem("dbx_return", JSON.stringify({ projectId: project.id, view: "settings" }));
+    try {
+      await dbxBeginLogin();
+    } catch (e) {
+      setDbxMessage("Could not start Dropbox login: " + e.message);
+    }
+  }
+
+  async function createDropboxFolders() {
+    if (!dropboxFolder.trim()) { setDbxMessage("Enter a parent folder name first."); return; }
+    updateProject({ dropboxParentFolder: dropboxFolder.trim() });
+    setDbxBusy(true);
+    setDbxMessage("");
+    try {
+      const paths = dbxProjectPaths(dropboxFolder.trim());
+      await dbxCreateFolder(paths.parent);
+      await dbxCreateFolder(paths.data);
+      await dbxCreateFolder(paths.photos);
+      setDbxMessage(`Created ${paths.parent} with DATA and PHOTOS subfolders.`);
+    } catch (e) {
+      setDbxMessage("Folder creation failed: " + e.message);
+    }
+    setDbxBusy(false);
+  }
+
+  function disconnectDropbox() {
+    dbxClearToken();
+    setDbxConnected(false);
+    setDbxMessage("Disconnected. Your token was cleared from this device.");
+  }
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <TopBar title="Project Settings" onBack={onBack} />
+      <TopBar title="Project Setup" onBack={onBack} />
       <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
         <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
           <label style={labelStyle}>Proximity alert distance (feet)</label>
@@ -1434,6 +2231,51 @@ function SettingsScreen({ project, updateProject, onBack }) {
           <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6 }}>
             GPS accuracy is typically 10–30 ft. Set this above your expected drift to avoid false alerts between close points.
           </div>
+        </div>
+
+        {/* Dropbox connection */}
+        <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div style={{
+              width: 10, height: 10, borderRadius: "50%",
+              background: dbxConnected ? "#3A5C2E" : "#B0A07C",
+            }} />
+            <span style={{ fontWeight: 800, fontSize: 15 }}>
+              Dropbox {dbxConnected ? "connected" : "not connected"}
+            </span>
+          </div>
+
+          <label style={labelStyle}>Project parent folder name</label>
+          <input
+            value={dropboxFolder}
+            onChange={(e) => setDropboxFolder(e.target.value)}
+            onBlur={() => updateProject({ dropboxParentFolder: dropboxFolder.trim() })}
+            placeholder="e.g. StumpyLakeSurvey"
+            style={inputStyle}
+          />
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6, marginBottom: 12 }}>
+            This folder is created in your Dropbox app folder, with <strong>DATA</strong> and <strong>PHOTOS</strong> subfolders inside. Photos upload to PHOTOS; CSV/KML exports upload to DATA.
+          </div>
+
+          {!dbxConnected ? (
+            <PrimaryButton onClick={connectDropbox} style={{ width: "100%" }}>
+              Connect Dropbox & Create Project Folder
+            </PrimaryButton>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <PrimaryButton onClick={createDropboxFolders} disabled={dbxBusy} style={{ width: "100%" }}>
+                {dbxBusy ? "Creating folders…" : "Create / Verify Project Folder"}
+              </PrimaryButton>
+              <SecondaryButton onClick={disconnectDropbox} style={{ width: "100%", borderColor: COLORS.rust, color: COLORS.rust }}>
+                Disconnect Dropbox
+              </SecondaryButton>
+            </div>
+          )}
+          {dbxMessage && (
+            <div style={{ fontSize: 12, color: COLORS.ink, marginTop: 10, background: COLORS.bg, padding: "8px 10px", borderRadius: 8 }}>
+              {dbxMessage}
+            </div>
+          )}
         </div>
 
         <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700, marginBottom: 10 }}>
@@ -1495,7 +2337,7 @@ function SettingsScreen({ project, updateProject, onBack }) {
         )}
 
         <div style={{ marginTop: 24, fontSize: 12, color: COLORS.inkSoft, lineHeight: 1.5 }}>
-          Default fields (Location number, Description, Latitude, Longitude) apply to every waypoint and can't be removed.
+          Default fields (Location number, Notes, Latitude, Longitude) apply to every waypoint and can't be removed.
         </div>
       </div>
     </div>
@@ -1657,6 +2499,8 @@ function NewFieldForm({ onAdd, onCancel }) {
 // ---------- Export Screen ----------
 function ExportScreen({ project, onBack }) {
   const [busy, setBusy] = useState(null);
+  const [dbxMsg, setDbxMsg] = useState("");
+  const dbxConnected = !!dbxGetToken();
 
   function download(filename, content, mime) {
     const blob = new Blob([content], { type: mime });
@@ -1670,25 +2514,43 @@ function ExportScreen({ project, onBack }) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
+  // Upload an export to the project's Dropbox DATA folder (if connected).
+  async function deliverToDropbox(filename, content, mime) {
+    if (!dbxConnected) return;
+    const folder = project.dropboxParentFolder;
+    if (!folder) { setDbxMsg("No Dropbox folder set in Project Setup — saved locally only."); return; }
+    try {
+      const paths = dbxProjectPaths(folder);
+      await dbxCreateFolder(paths.parent);
+      await dbxCreateFolder(paths.data);
+      const blob = new Blob([content], { type: mime });
+      await dbxUpload(`${paths.data}/${filename}`, blob);
+      setDbxMsg(`Uploaded to ${paths.data}/${filename}`);
+    } catch (e) {
+      setDbxMsg("Dropbox upload failed (saved locally): " + e.message);
+    }
+  }
+
   function buildRows() {
     const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
     return sorted.map((wp) => {
       const row = {
         Location: pad3(wp.locationNum),
-        Description: wp.description || "",
+        Notes: wp.description || "",
         Latitude: wp.lat,
         Longitude: wp.lon,
       };
       project.customFields.forEach((f) => {
         row[f.label] = (wp.customValues && wp.customValues[f.id]) || "";
       });
-      row.PhotoRef = wp.photoRef || "";
+      row.Image = wp.photoRef || "no photo taken";
       return row;
     });
   }
 
-  function exportCSV() {
+  async function exportCSV() {
     setBusy("csv");
+    setDbxMsg("");
     const rows = buildRows();
     if (rows.length === 0) {
       alert("No waypoints to export.");
@@ -1707,24 +2569,28 @@ function ExportScreen({ project, onBack }) {
           .join(",")
       );
     });
-    download(`${project.name.replace(/\s+/g, "_")}.csv`, csvLines.join("\n"), "text/csv");
+    const content = csvLines.join("\n");
+    const fname = `${project.name.replace(/\s+/g, "_")}.csv`;
+    download(fname, content, "text/csv");
+    await deliverToDropbox(fname, content, "text/csv");
     setBusy(null);
   }
 
-  function exportGeoJSON() {
+  async function exportGeoJSON() {
     setBusy("geojson");
+    setDbxMsg("");
     const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
     const geojson = {
       type: "FeatureCollection",
       features: sorted.map((wp) => {
         const props = {
           Location: pad3(wp.locationNum),
-          Description: wp.description || "",
+          Notes: wp.description || "",
         };
         project.customFields.forEach((f) => {
           props[f.label] = (wp.customValues && wp.customValues[f.id]) || "";
         });
-        props.PhotoRef = wp.photoRef || "";
+        props.Image = wp.photoRef || "no photo taken";
         return {
           type: "Feature",
           geometry: { type: "Point", coordinates: [wp.lon, wp.lat] },
@@ -1732,7 +2598,10 @@ function ExportScreen({ project, onBack }) {
         };
       }),
     };
-    download(`${project.name.replace(/\s+/g, "_")}.geojson`, JSON.stringify(geojson, null, 2), "application/geo+json");
+    const content = JSON.stringify(geojson, null, 2);
+    const fname = `${project.name.replace(/\s+/g, "_")}.geojson`;
+    download(fname, content, "application/geo+json");
+    await deliverToDropbox(fname, content, "application/geo+json");
     setBusy(null);
   }
 
@@ -1740,8 +2609,9 @@ function ExportScreen({ project, onBack }) {
     return String(str).replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" }[c]));
   }
 
-  function exportKML() {
+  async function exportKML() {
     setBusy("kml");
+    setDbxMsg("");
     const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
     const placemarks = sorted
       .map((wp) => {
@@ -1755,7 +2625,7 @@ function ExportScreen({ project, onBack }) {
   <name>Location ${pad3(wp.locationNum)}</name>
   <description>${escapeXml(wp.description || "")}</description>
   <ExtendedData>
-    <Data name="PhotoRef"><value>${escapeXml(wp.photoRef || "")}</value></Data>
+    <Data name="Image"><value>${escapeXml(wp.photoRef || "no photo taken")}</value></Data>
     ${extData}
   </ExtendedData>
   <Point><coordinates>${wp.lon},${wp.lat},0</coordinates></Point>
@@ -1769,7 +2639,9 @@ function ExportScreen({ project, onBack }) {
 ${placemarks}
 </Document>
 </kml>`;
-    download(`${project.name.replace(/\s+/g, "_")}.kml`, kml, "application/vnd.google-earth.kml+xml");
+    const fname = `${project.name.replace(/\s+/g, "_")}.kml`;
+    download(fname, kml, "application/vnd.google-earth.kml+xml");
+    await deliverToDropbox(fname, kml, "application/vnd.google-earth.kml+xml");
     setBusy(null);
   }
 
@@ -1790,7 +2662,7 @@ ${placemarks}
   <name>Location ${pad3(wp.locationNum)}</name>
   <description>${escapeXml(wp.description || "")}</description>
   <ExtendedData>
-    <Data name="PhotoRef"><value>${escapeXml(wp.photoRef || "")}</value></Data>
+    <Data name="Image"><value>${escapeXml(wp.photoRef || "no photo taken")}</value></Data>
     ${extData}
   </ExtendedData>
   <Point><coordinates>${wp.lon},${wp.lat},0</coordinates></Point>
@@ -1868,7 +2740,7 @@ ${placemarks}
         textY += 16;
 
         doc.setFont(undefined, "bold");
-        doc.text("Description:", textX, textY);
+        doc.text("Notes:", textX, textY);
         textY += 13;
         doc.setFont(undefined, "normal");
         const descLines = doc.splitTextToSize(wp.description || "(none)", pageW - textX - margin);
@@ -1903,6 +2775,23 @@ ${placemarks}
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
       <TopBar title="Export" onBack={onBack} />
       <div style={{ padding: 16, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{
+          background: dbxConnected ? "#DCE8D5" : "#FBE3D6",
+          border: `1.5px solid ${dbxConnected ? "#6B8F5C" : COLORS.line}`,
+          borderRadius: 10,
+          padding: "10px 14px",
+          fontSize: 13,
+          color: COLORS.ink,
+        }}>
+          {dbxConnected
+            ? `Dropbox connected — exports upload to ${project.dropboxParentFolder ? "/" + project.dropboxParentFolder + "/DATA" : "your project DATA folder"} and also download locally.`
+            : "Dropbox not connected — exports download locally only. Connect in Project Setup to also upload."}
+        </div>
+        {dbxMsg && (
+          <div style={{ fontSize: 12, color: COLORS.ink, background: COLORS.bg, padding: "8px 10px", borderRadius: 8 }}>
+            {dbxMsg}
+          </div>
+        )}
         <div style={{ fontSize: 13, color: COLORS.inkSoft, fontWeight: 700 }}>DATA</div>
         <ExportRow
           icon={<FileText size={20} />}
@@ -1951,7 +2840,7 @@ ${placemarks}
         }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: COLORS.ink, marginBottom: 4 }}>Photos</div>
           <div style={{ fontSize: 13, color: COLORS.inkSoft, lineHeight: 1.5 }}>
-            Photos are saved directly to your Camera Roll when taken. Match them to waypoints using the filename and capture time recorded on each waypoint. No photo export needed.
+            Photos upload directly to your project's Dropbox PHOTOS folder when taken, named Pic001.jpg, Pic002.jpg, and so on. The matching filename is recorded in each waypoint's Image column. No separate photo export needed.
           </div>
         </div>
       </div>
