@@ -146,7 +146,15 @@ async function dbxCompleteLogin(code) {
 function dbxGetToken() {
   try {
     const raw = localStorage.getItem(STORAGE_PREFIX + ":dbx_token");
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const token = JSON.parse(raw);
+    // Dropbox short-lived tokens last ~4 hours (14400 seconds). Clear at 3.5 hrs to be safe.
+    const AGE_LIMIT_MS = 3.5 * 60 * 60 * 1000;
+    if (token.obtained && (Date.now() - token.obtained) > AGE_LIMIT_MS) {
+      localStorage.removeItem(STORAGE_PREFIX + ":dbx_token");
+      return null;
+    }
+    return token;
   } catch (e) { return null; }
 }
 function dbxClearToken() {
@@ -634,6 +642,7 @@ function ProjectsScreen({ projects, setProjects, templates, onOpen, onNav }) {
       nextLocationNum: 1,
       nextPhotoNum: 1,
       proximityThresholdFeet: tpl ? tpl.proximityThresholdFeet : 20,
+      dwellSeconds: tpl ? (tpl.dwellSeconds || 5) : 5,
       dropboxParentFolder: tpl && tpl.dropboxParentFolder ? tpl.dropboxParentFolder : "",
       customFields: copiedFields,
       waypoints: [], // {id, locationNum, description, lat, lon, photoRef, customValues: {fieldId: value}, createdAt}
@@ -666,9 +675,9 @@ function ProjectsScreen({ projects, setProjects, templates, onOpen, onNav }) {
         }}>
           <div style={{ fontWeight: 800, color: COLORS.ink, marginBottom: 6, fontSize: 14 }}>HOW TO GET STARTED</div>
           <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>1.</span> Tap <strong>New Project</strong>, name it, and optionally start from a saved <strong>Template</strong>.</div>
-          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>2.</span> Once inside, tap <strong>Project Setup</strong> (top right) to set custom fields, proximity distance, and Dropbox folder.</div>
+          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>2.</span> Once inside, tap <strong>Project Setup</strong> to set custom fields, proximity distance, and Dropbox folder.</div>
           <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>3.</span> Tap <strong>Mark Waypoint</strong> to record your GPS location and fill in attributes.</div>
-          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>4.</span> When done for the day, tap <strong>Export Data</strong>, then <strong>Conclude Session</strong>.</div>
+          <div><span style={{ color: COLORS.rust, fontWeight: 700 }}>4.</span> When done for the day, tap <strong>Conclude Session</strong>. Export when ready.</div>
           <div style={{ marginTop: 6 }}><span style={{ color: COLORS.rust, fontWeight: 700 }}>Tip:</span> Create your templates below. Select from them within the project.</div>
         </div>
         <button
@@ -843,7 +852,7 @@ function TemplatesScreen({ templates, setTemplates, onBack }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
 
   const editing = editingId === "new"
-    ? { id: "new", name: "", proximityThresholdFeet: 20, dropboxParentFolder: "", customFields: [] }
+    ? { id: "new", name: "", proximityThresholdFeet: 20, dwellSeconds: 5, dropboxParentFolder: "", customFields: [] }
     : templates.find((t) => t.id === editingId);
 
   function saveTemplate(tpl) {
@@ -909,7 +918,7 @@ function TemplatesScreen({ templates, setTemplates, onBack }) {
               <div onClick={() => setEditingId(t.id)} style={{ flex: 1, cursor: "pointer" }}>
                 <div style={{ fontWeight: 800, fontSize: 17 }}>{t.name}</div>
                 <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 2 }}>
-                  {t.customFields.length} field{t.customFields.length !== 1 ? "s" : ""} · {t.proximityThresholdFeet} ft proximity
+                  {t.customFields.length} field{t.customFields.length !== 1 ? "s" : ""} · {t.proximityThresholdFeet} ft proximity · {t.dwellSeconds || 5}s dwell
                 </div>
               </div>
               <button onClick={() => setEditingId(t.id)} style={{ background: "none", border: "none", color: COLORS.ink, padding: 6 }}>
@@ -956,6 +965,7 @@ function TemplatesScreen({ templates, setTemplates, onBack }) {
 function TemplateEditor({ template, onSave, onCancel }) {
   const [name, setName] = useState(template.name);
   const [threshold, setThreshold] = useState(template.proximityThresholdFeet);
+  const [dwellSecs, setDwellSecs] = useState(template.dwellSeconds || 5);
   const [dropboxFolder, setDropboxFolder] = useState(template.dropboxParentFolder || "");
   const [fields, setFields] = useState(template.customFields);
   const [addingField, setAddingField] = useState(false);
@@ -970,6 +980,7 @@ function TemplateEditor({ template, onSave, onCancel }) {
       ...template,
       name: name.trim(),
       proximityThresholdFeet: threshold === 0 ? 0 : (threshold || 20),
+      dwellSeconds: dwellSecs || 5,
       dropboxParentFolder: dropboxFolder.trim(),
       customFields: fields,
     });
@@ -989,6 +1000,15 @@ function TemplateEditor({ template, onSave, onCancel }) {
             value={threshold === 0 ? "" : threshold}
             onChange={(e) => { const raw = e.target.value; setThreshold(raw === "" ? 0 : Math.max(0, Number(raw))); }}
             placeholder="e.g. 20"
+            style={inputStyle}
+          />
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>GPS dwell time (seconds)</label>
+          <input
+            type="number"
+            value={dwellSecs === 0 ? "" : dwellSecs}
+            onChange={(e) => { const raw = e.target.value; setDwellSecs(raw === "" ? 0 : Math.max(1, Math.min(30, Number(raw)))); }}
+            placeholder="e.g. 5"
             style={inputStyle}
           />
 
@@ -1065,6 +1085,7 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
   const [gettingLoc, setGettingLoc] = useState(false);
   const [pendingWaypoint, setPendingWaypoint] = useState(null); // {lat, lon, locationNum}
   const [proximityAlert, setProximityAlert] = useState(null); // waypoint object
+  const [showDropboxGate, setShowDropboxGate] = useState(false);
   const watchIdRef = useRef(null);
   const alertedRecentlyRef = useRef({}); // id -> timestamp to debounce repeated dings
 
@@ -1095,23 +1116,44 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
   }, [monitoring, project.waypoints, project.proximityThresholdFeet]);
 
   function markLocation() {
+    // Gate: require Dropbox connection and folder before allowing waypoint capture
+    const token = dbxGetToken();
+    if (!token || !project.dropboxParentFolder) {
+      setShowDropboxGate(true);
+      return;
+    }
     playWaypointDing();
     setGettingLoc(true);
-    navigator.geolocation.getCurrentPosition(
+    // Dwell GPS: watch for project-configured seconds, keep the reading with best accuracy.
+    // This measurably improves accuracy under tree canopy and near structures.
+    const DWELL_MS = (project.dwellSeconds || 5) * 1000;
+    let bestPos = null;
+    const dwellId = navigator.geolocation.watchPosition(
       (pos) => {
-        setGettingLoc(false);
-        setPendingWaypoint({
-          lat: pos.coords.latitude,
-          lon: pos.coords.longitude,
-          locationNum: project.nextLocationNum,
-        });
+        if (!bestPos || pos.coords.accuracy < bestPos.coords.accuracy) {
+          bestPos = pos;
+        }
       },
       (err) => {
         setGettingLoc(false);
         alert("Could not get location: " + err.message);
       },
-      { enableHighAccuracy: true, timeout: 15000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
+    setTimeout(() => {
+      navigator.geolocation.clearWatch(dwellId);
+      setGettingLoc(false);
+      if (bestPos) {
+        setPendingWaypoint({
+          lat: bestPos.coords.latitude,
+          lon: bestPos.coords.longitude,
+          accuracy: Math.round(bestPos.coords.accuracy * 3.28084), // store in feet
+          locationNum: project.nextLocationNum,
+        });
+      } else {
+        alert("Could not get location. Make sure location services are enabled.");
+      }
+    }, DWELL_MS);
   }
 
   function saveWaypoint(waypointData) {
@@ -1142,6 +1184,37 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
       />
 
       <div style={{ padding: 16, flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Dropbox readiness indicator */}
+        {(() => {
+          const token = dbxGetToken();
+          const folder = project.dropboxParentFolder;
+          const ready = !!token && !!folder;
+          const noToken = !token;
+          return (
+            <div
+              onClick={() => !ready && onNav("settings")}
+              style={{
+                background: ready ? "#DCE8D5" : "#FBE3D6",
+                border: `1.5px solid ${ready ? "#6B8F5C" : COLORS.rust}`,
+                borderRadius: 10,
+                padding: "10px 14px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontSize: 13,
+                cursor: ready ? "default" : "pointer",
+              }}
+            >
+              <span style={{ fontWeight: 700, color: ready ? "#3A5C2E" : COLORS.rust }}>
+                {ready
+                  ? `● Dropbox ready — ${folder}`
+                  : noToken
+                    ? "⚠ Dropbox not connected — tap to set up"
+                    : "⚠ No project folder set — tap to set up"}
+              </span>
+            </div>
+          );
+        })()}
         <div
           style={{
             background: monitoring ? "#DCE8D5" : COLORS.card,
@@ -1191,10 +1264,10 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
         >
           <MapPin size={44} />
           <span style={{ fontWeight: 800, fontSize: 20, letterSpacing: 0.5 }}>
-            {gettingLoc ? "GETTING LOCATION…" : "MARK WAYPOINT"}
+            {gettingLoc ? `ACQUIRING… (${project.dwellSeconds || 5}s)` : "MARK WAYPOINT"}
           </span>
           <span style={{ fontSize: 13, opacity: 0.9, fontFamily: "ui-monospace, monospace" }}>
-            Next: Location {pad3(project.nextLocationNum)}
+            {gettingLoc ? "Dwelling for best accuracy" : `Next: Location ${pad3(project.nextLocationNum)}`}
           </span>
         </button>
 
@@ -1240,6 +1313,15 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
         />
       )}
 
+      {showDropboxGate && (
+        <DropboxGateModal
+          hasToken={!!dbxGetToken()}
+          hasFolder={!!project.dropboxParentFolder}
+          onGoToSetup={() => { setShowDropboxGate(false); onNav("settings"); }}
+          onDismiss={() => setShowDropboxGate(false)}
+        />
+      )}
+
       {proximityAlert && (
         <ProximityAlertModal
           waypoint={proximityAlert}
@@ -1256,6 +1338,44 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
           onNo={() => setProximityAlert(null)}
         />
       )}
+    </div>
+  );
+}
+
+// ---------- Dropbox Gate Modal ----------
+// Shown when the operator taps Mark Waypoint before Dropbox is set up.
+function DropboxGateModal({ hasToken, hasFolder, onGoToSetup, onDismiss }) {
+  const msg = !hasToken
+    ? "You need to connect Dropbox before recording waypoints. Dropbox is used to store your photos and project data."
+    : "You need to set a Dropbox project folder name before recording waypoints.";
+
+  return (
+    <div style={{ ...modalOverlayStyleBase(), alignItems: "center" }}>
+      <div style={{
+        background: COLORS.card,
+        borderRadius: 16,
+        padding: 24,
+        width: "88%",
+        maxWidth: 360,
+        textAlign: "center",
+        border: `3px solid ${COLORS.rust}`,
+        boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
+      }}>
+        <div style={{ fontWeight: 800, fontSize: 18, color: COLORS.ink, marginBottom: 10 }}>
+          {!hasToken ? "Dropbox Not Connected" : "No Project Folder Set"}
+        </div>
+        <div style={{ fontSize: 14, color: COLORS.inkSoft, lineHeight: 1.6, marginBottom: 20 }}>
+          {msg}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <PrimaryButton onClick={onGoToSetup} style={{ width: "100%" }}>
+            Go to Project Setup
+          </PrimaryButton>
+          <SecondaryButton onClick={onDismiss} style={{ width: "100%" }}>
+            Cancel
+          </SecondaryButton>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1283,22 +1403,36 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
 
   async function handlePhotoFile(e) {
     const file = e.target.files && e.target.files[0];
-    e.target.value = ""; // allow re-pick
     if (!file) return;
+
+    // Read the blob into memory BEFORE clearing the input — on iOS, clearing
+    // the input can invalidate the file reference before the async upload reads it.
+    let fileBlob;
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      fileBlob = new Blob([arrayBuffer], { type: "image/jpeg" });
+    } catch (readErr) {
+      setPhotoRef(`${autoName}.jpg`);
+      setUploadState("error");
+      setUploadMsg("Could not read photo from camera. Please try again.");
+      e.target.value = "";
+      return;
+    }
+    e.target.value = ""; // safe to clear now — blob is in memory
+
     const filename = `${autoName}.jpg`;
     const folder = project.dropboxParentFolder || "";
 
     if (!dbxConnected) {
-      // No Dropbox connection — record the reference name but can't upload
       setPhotoRef(filename);
       setUploadState("error");
-      setUploadMsg("Not connected to Dropbox — name recorded, but photo not uploaded. Connect Dropbox in Project Setup, then retake.");
+      setUploadMsg("Not connected to Dropbox. Connect in Project Setup, then retake.");
       return;
     }
     if (!folder) {
       setPhotoRef(filename);
       setUploadState("error");
-      setUploadMsg("No Dropbox folder set for this project. Set one in Project Setup, then retake.");
+      setUploadMsg("No Dropbox folder set. Set one in Project Setup, then retake.");
       return;
     }
 
@@ -1306,18 +1440,24 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
     setUploadMsg("Uploading to Dropbox…");
     try {
       const paths = dbxProjectPaths(folder);
-      // Ensure folders exist (cheap if already there)
       await dbxCreateFolder(paths.parent);
       await dbxCreateFolder(paths.photos);
-      await dbxUpload(`${paths.photos}/${filename}`, file);
+      const result = await dbxUpload(`${paths.photos}/${filename}`, fileBlob);
+      if (!result || !result.name) throw new Error("Upload returned unexpected response");
       setPhotoRef(filename);
       setUploadState("done");
-      setUploadMsg(`Uploaded to ${paths.photos}/${filename}`);
+      setUploadMsg(`✓ Uploaded: ${paths.photos}/${filename}`);
     } catch (err) {
-      // Queue for later if upload fails (e.g. no signal)
+      const msg = err.message || "";
+      // Distinguish token expiry (401) from connectivity issues
+      const isAuthError = msg.includes("401") || msg.includes("invalid_access_token") || msg.includes("expired");
       setPhotoRef(filename);
-      setUploadState("queued");
-      setUploadMsg("Upload failed (no connection?). Name recorded; you can retake when back in range.");
+      setUploadState("error");
+      if (isAuthError) {
+        setUploadMsg("Dropbox session expired. Go to Project Setup → Disconnect → Reconnect Dropbox, then retake.");
+      } else {
+        setUploadMsg("Upload failed — check your connection and try again. (" + msg.slice(0, 80) + ")");
+      }
     }
   }
 
@@ -1343,6 +1483,11 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
             <div style={{ fontSize: 12, color: COLORS.inkSoft, fontFamily: "ui-monospace, monospace" }}>
               {waypoint.lat.toFixed(6)}, {waypoint.lon.toFixed(6)}
             </div>
+            {waypoint.accuracy && (
+              <div style={{ fontSize: 12, color: waypoint.accuracy <= 20 ? "#3A5C2E" : COLORS.amber, fontWeight: 700, marginTop: 2 }}>
+                GPS accuracy: ±{waypoint.accuracy} ft
+              </div>
+            )}
           </div>
         </div>
 
@@ -1351,7 +1496,7 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value.slice(0, 200))}
-            placeholder="What's here? (max 200 characters)"
+            placeholder="Field notes as necessary (max 200 characters)"
             style={{ ...inputStyle, minHeight: 70, resize: "vertical" }}
           />
           <div style={{ fontSize: 11, color: COLORS.inkSoft, textAlign: "right", marginTop: 2 }}>
@@ -2166,6 +2311,8 @@ function MapScreen({ project, onBack }) {
 function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxConnected }) {
   const [fields, setFields] = useState(project.customFields);
   const [threshold, setThreshold] = useState(project.proximityThresholdFeet);
+  const [dwellSecs, setDwellSecs] = useState(project.dwellSeconds || 5);
+  const [projectName, setProjectName] = useState(project.name);
   const [addingField, setAddingField] = useState(false);
   const [dropboxFolder, setDropboxFolder] = useState(project.dropboxParentFolder || "");
   const [dbxBusy, setDbxBusy] = useState(false);
@@ -2219,6 +2366,17 @@ function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxCo
       <TopBar title="Project Setup" onBack={onBack} />
       <div style={{ padding: 16, flex: 1, overflowY: "auto" }}>
         <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
+          <label style={labelStyle}>Project name</label>
+          <input
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            onBlur={() => { if (projectName.trim()) updateProject({ name: projectName.trim() }); }}
+            placeholder="Project name"
+            style={inputStyle}
+          />
+        </div>
+
+        <div style={{ background: COLORS.card, borderRadius: 12, padding: 16, border: `1px solid ${COLORS.line}`, marginBottom: 16 }}>
           <label style={labelStyle}>Proximity alert distance (feet)</label>
           <input
             type="number"
@@ -2234,6 +2392,23 @@ function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxCo
           />
           <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6 }}>
             GPS accuracy is typically 10–30 ft. Set this above your expected drift to avoid false alerts between close points.
+          </div>
+
+          <label style={{ ...labelStyle, marginTop: 14 }}>GPS dwell time (seconds)</label>
+          <input
+            type="number"
+            value={dwellSecs === 0 ? "" : dwellSecs}
+            onChange={(e) => {
+              const raw = e.target.value;
+              const v = raw === "" ? 0 : Math.max(1, Math.min(30, Number(raw)));
+              setDwellSecs(v);
+              updateProject({ dwellSeconds: v });
+            }}
+            placeholder="e.g. 5"
+            style={inputStyle}
+          />
+          <div style={{ fontSize: 12, color: COLORS.inkSoft, marginTop: 6 }}>
+            How long the app dwells on GPS before recording a waypoint, keeping the most accurate reading. 3–5 sec is good in open areas; 10–15 sec under dense canopy. Max 30.
           </div>
         </div>
 
