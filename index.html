@@ -320,6 +320,45 @@ function playSoftTick() {
   osc.stop(ctx.currentTime + 0.07);
 }
 
+// Dwell-complete tone: high to low — signals GPS acquisition done.
+function playDwellComplete() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "triangle";
+  osc.frequency.setValueAtTime(1046, ctx.currentTime);         // C6
+  osc.frequency.exponentialRampToValueAtTime(523, ctx.currentTime + 0.28); // C5
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.28, ctx.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.32);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + 0.34);
+}
+
+// Upload-failed warning: high to low — signals something went wrong.
+function playUploadFailed() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const tone = (freq, start, dur) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sawtooth";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+    gain.gain.exponentialRampToValueAtTime(0.22, ctx.currentTime + start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime + start);
+    osc.stop(ctx.currentTime + start + dur + 0.02);
+  };
+  tone(660, 0, 0.18);
+  tone(440, 0.22, 0.22);
+}
+
 
 async function storageGet(key, fallback) {
   try {
@@ -364,13 +403,28 @@ function FieldSurveyApp() {
           console.warn("Dropbox login failed", e);
           alert("Dropbox connection failed. Please try connecting again.");
         }
-        // Clean the ?code= out of the URL and restore where the user was
         window.history.replaceState({}, document.title, window.location.pathname);
         const ret = sessionStorage.getItem("dbx_return");
         if (ret) {
           try {
             const r = JSON.parse(ret);
-            if (r.projectId) { setActiveProjectId(r.projectId); setView(r.view || "settings"); }
+            if (r.projectId) {
+              setActiveProjectId(r.projectId);
+              setView(r.view || "settings");
+              // Auto-create DATA + PHOTOS folders right after login using saved folder name
+              const savedProjects = await storageGet("projects:index", []);
+              const proj = savedProjects.find((p) => p.id === r.projectId);
+              if (proj && proj.dropboxParentFolder) {
+                try {
+                  const paths = dbxProjectPaths(proj.dropboxParentFolder);
+                  await dbxCreateFolder(paths.parent);
+                  await dbxCreateFolder(paths.data);
+                  await dbxCreateFolder(paths.photos);
+                } catch (folderErr) {
+                  console.warn("Auto folder create after login:", folderErr);
+                }
+              }
+            }
           } catch (e) {}
           sessionStorage.removeItem("dbx_return");
         }
@@ -1144,6 +1198,7 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
       navigator.geolocation.clearWatch(dwellId);
       setGettingLoc(false);
       if (bestPos) {
+        playDwellComplete();
         setPendingWaypoint({
           lat: bestPos.coords.latitude,
           lon: bestPos.coords.longitude,
@@ -1157,12 +1212,10 @@ function CaptureScreen({ project, updateProject, onBack, onNav, monitoring, setM
   }
 
   function saveWaypoint(waypointData) {
-    const { _incrementPhoto, ...cleanData } = waypointData;
-    const newWp = { id: uid(), createdAt: new Date().toISOString(), ...cleanData };
+    const newWp = { id: uid(), createdAt: new Date().toISOString(), ...waypointData };
     updateProject({
       waypoints: [...project.waypoints, newWp],
       nextLocationNum: project.nextLocationNum + 1,
-      nextPhotoNum: _incrementPhoto ? (project.nextPhotoNum || 1) + 1 : (project.nextPhotoNum || 1),
     });
     setPendingWaypoint(null);
   }
@@ -1388,8 +1441,8 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
     project.customFields.forEach((f) => (init[f.id] = ""));
     return init;
   });
-  // Auto-assign next sequential photo name for this project
-  const autoName = `Pic${String(project.nextPhotoNum || 1).padStart(3, "0")}`;
+  // Photo name keyed to this waypoint's location number — always matches the record.
+  const autoName = `Location${pad3(waypoint.locationNum)}Image`;
   const [photoRef, setPhotoRef] = useState(null);   // filename stored once captured/uploaded
   const [uploadState, setUploadState] = useState("idle"); // idle | uploading | done | queued | error
   const [uploadMsg, setUploadMsg] = useState("");
@@ -1412,6 +1465,7 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
       const arrayBuffer = await file.arrayBuffer();
       fileBlob = new Blob([arrayBuffer], { type: "image/jpeg" });
     } catch (readErr) {
+      playUploadFailed();
       setPhotoRef(`${autoName}.jpg`);
       setUploadState("error");
       setUploadMsg("Could not read photo from camera. Please try again.");
@@ -1424,12 +1478,14 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
     const folder = project.dropboxParentFolder || "";
 
     if (!dbxConnected) {
+      playUploadFailed();
       setPhotoRef(filename);
       setUploadState("error");
       setUploadMsg("Not connected to Dropbox. Connect in Project Setup, then retake.");
       return;
     }
     if (!folder) {
+      playUploadFailed();
       setPhotoRef(filename);
       setUploadState("error");
       setUploadMsg("No Dropbox folder set. Set one in Project Setup, then retake.");
@@ -1449,10 +1505,10 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
       setUploadMsg(`✓ Uploaded: ${paths.photos}/${filename}`);
     } catch (err) {
       const msg = err.message || "";
-      // Distinguish token expiry (401) from connectivity issues
       const isAuthError = msg.includes("401") || msg.includes("invalid_access_token") || msg.includes("expired");
       setPhotoRef(filename);
       setUploadState("error");
+      playUploadFailed();
       if (isAuthError) {
         setUploadMsg("Dropbox session expired. Go to Project Setup → Disconnect → Reconnect Dropbox, then retake.");
       } else {
@@ -1468,7 +1524,6 @@ function AttributeFormModal({ project, waypoint, onSave, onCancel }) {
       lat: waypoint.lat,
       lon: waypoint.lon,
       photoRef,
-      _incrementPhoto: photoRef !== null,
       customValues,
     });
   }
@@ -2038,14 +2093,14 @@ function EditWaypointModal({ project, waypoint, onSave, onCancel }) {
 function FindWaypointScreen({ project, initialWaypointId, onBack }) {
   const sorted = [...project.waypoints].sort((a, b) => a.locationNum - b.locationNum);
   const [targetId, setTargetId] = useState(initialWaypointId || (sorted[0] && sorted[0].id) || null);
-  const [pos, setPos] = useState(null); // {lat, lon}
-  const [heading, setHeading] = useState(null); // device compass heading in degrees, or null
-  const [compassMode, setCompassMode] = useState("unknown"); // unknown | live | assumed
+  const [pos, setPos] = useState(null);
+  const [heading, setHeading] = useState(null);
+  const [compassLive, setCompassLive] = useState(false);
   const watchRef = useRef(null);
 
   const target = project.waypoints.find((w) => w.id === targetId);
 
-  // Live GPS position
+  // Live GPS
   useEffect(() => {
     if (!("geolocation" in navigator)) return;
     const id = navigator.geolocation.watchPosition(
@@ -2057,33 +2112,30 @@ function FindWaypointScreen({ project, initialWaypointId, onBack }) {
     return () => navigator.geolocation.clearWatch(id);
   }, []);
 
-  // Device compass (best-effort; falls back to "assumed north")
+  // Auto-request compass on mount — no manual step needed
   useEffect(() => {
     function handleOrientation(e) {
       let h = null;
       if (typeof e.webkitCompassHeading === "number") {
-        h = e.webkitCompassHeading; // iOS gives true heading here
+        h = e.webkitCompassHeading;
       } else if (e.alpha != null) {
-        h = 360 - e.alpha; // approximate for other browsers
+        h = 360 - e.alpha;
       }
       if (h != null && !isNaN(h)) {
         setHeading(h);
-        setCompassMode("live");
+        setCompassLive(true);
       }
     }
     window.addEventListener("deviceorientation", handleOrientation, true);
-    // If no compass event arrives shortly, fall back to assumed-north mode
-    const fallbackTimer = setTimeout(() => {
-      setCompassMode((m) => (m === "live" ? m : "assumed"));
-    }, 2500);
-    return () => {
-      window.removeEventListener("deviceorientation", handleOrientation, true);
-      clearTimeout(fallbackTimer);
-    };
+    // Request permission on iOS 13+ automatically
+    if (typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().catch(() => {});
+    }
+    return () => window.removeEventListener("deviceorientation", handleOrientation, true);
   }, []);
 
-  function requestCompass() {
-    // iOS 13+ requires explicit permission for orientation
+  function requestCompassManual() {
     if (typeof DeviceOrientationEvent !== "undefined" &&
         typeof DeviceOrientationEvent.requestPermission === "function") {
       DeviceOrientationEvent.requestPermission().catch(() => {});
@@ -2092,14 +2144,30 @@ function FindWaypointScreen({ project, initialWaypointId, onBack }) {
 
   const dist = pos && target ? haversineFeet(pos.lat, pos.lon, target.lat, target.lon) : null;
   const brng = pos && target ? bearingDegrees(pos.lat, pos.lon, target.lat, target.lon) : null;
-  // Arrow rotation: if live compass available, subtract heading so arrow points
-  // relative to where the phone is actually facing. Otherwise assume top = north.
-  const effectiveHeading = compassMode === "live" && heading != null ? heading : 0;
-  const arrowRotation = brng != null ? brng - effectiveHeading : 0;
+  const effectiveHeading = compassLive && heading != null ? heading : 0;
+  // Angle of the dot on the ring (0 = top = north)
+  const dotAngleDeg = brng != null ? brng - effectiveHeading : null;
+  const dotAngleRad = dotAngleDeg != null ? (dotAngleDeg * Math.PI) / 180 : null;
+  const RING_R = 130; // ring radius in px (for a 300px viewBox)
+  const dotX = dotAngleRad != null ? 150 + RING_R * Math.sin(dotAngleRad) : null;
+  const dotY = dotAngleRad != null ? 150 - RING_R * Math.cos(dotAngleRad) : null;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <TopBar title="Find Waypoint" onBack={onBack} />
+      <TopBar
+        title="Find Waypoint"
+        onBack={onBack}
+        right={
+          !compassLive ? (
+            <button
+              onClick={requestCompassManual}
+              style={{ background: COLORS.amber, border: "none", color: "#fff", borderRadius: 8, padding: "6px 10px", fontWeight: 700, fontSize: 12 }}
+            >
+              Enable Compass
+            </button>
+          ) : null
+        }
+      />
       <div style={{ padding: 16, flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
 
         {sorted.length === 0 ? (
@@ -2108,122 +2176,129 @@ function FindWaypointScreen({ project, initialWaypointId, onBack }) {
           </div>
         ) : (
           <>
+            {/* Waypoint selector — clearly labelled as a chooser */}
             <div>
-              <label style={labelStyle}>Target waypoint</label>
+              <label style={labelStyle}>Select waypoint to find — tap to choose</label>
               <select
                 value={targetId || ""}
                 onChange={(e) => setTargetId(e.target.value)}
-                style={{ ...inputStyle, appearance: "none" }}
+                style={{ ...inputStyle, appearance: "none", fontWeight: 700, fontSize: 17,
+                  background: "#fff", border: `2px solid ${COLORS.rust}` }}
               >
                 {sorted.map((w) => (
                   <option key={w.id} value={w.id}>
-                    Location {pad3(w.locationNum)}{w.description ? ` — ${w.description.slice(0, 30)}` : ""}
+                    {"Location " + pad3(w.locationNum) + (w.description ? " — " + w.description.slice(0, 28) : "")}
                   </option>
                 ))}
               </select>
             </div>
 
-            {/* Compass / direction display */}
+            {/* Distance + bearing readout */}
             <div style={{
               background: COLORS.card,
               border: `1px solid ${COLORS.line}`,
-              borderRadius: 16,
-              padding: 24,
+              borderRadius: 14,
+              padding: "16px 20px",
               display: "flex",
-              flexDirection: "column",
+              justifyContent: "space-between",
               alignItems: "center",
-              gap: 12,
             }}>
-              <div style={{
-                width: 180,
-                height: 180,
-                borderRadius: "50%",
-                border: `3px solid ${COLORS.line}`,
-                position: "relative",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                background: COLORS.bg,
-              }}>
-                {/* N marker */}
-                <div style={{ position: "absolute", top: 6, fontSize: 12, fontWeight: 800, color: COLORS.inkSoft }}>N</div>
-                <div style={{ position: "absolute", bottom: 6, fontSize: 11, color: COLORS.inkSoft }}>S</div>
-                <div style={{ position: "absolute", left: 8, fontSize: 11, color: COLORS.inkSoft }}>W</div>
-                <div style={{ position: "absolute", right: 8, fontSize: 11, color: COLORS.inkSoft }}>E</div>
-                {/* Needle: SVG rotates around the exact center (90,90) */}
-                <svg width="160" height="160" viewBox="0 0 180 180" style={{ position: "absolute" }}>
-                  <g transform={`rotate(${arrowRotation} 90 90)`} style={{ transition: "transform 0.3s ease-out", transformOrigin: "90px 90px" }}>
-                    {/* Pointer half (toward target) */}
-                    <polygon points="90,20 104,90 90,78 76,90" fill={COLORS.rust} />
-                    {/* Tail half */}
-                    <polygon points="90,160 76,90 90,102 104,90" fill={COLORS.line} />
-                    {/* Center hub */}
-                    <circle cx="90" cy="90" r="7" fill={COLORS.ink} />
-                  </g>
-                </svg>
+              <div>
+                <div style={{ fontSize: 38, fontWeight: 800, color: COLORS.ink, fontFamily: "ui-monospace, monospace", lineHeight: 1 }}>
+                  {dist != null ? (dist < 1000 ? Math.round(dist) + " ft" : (dist / 5280).toFixed(2) + " mi") : "—"}
+                </div>
+                <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 4 }}>distance to target</div>
               </div>
-
-              {dist != null ? (
-                <>
-                  <div style={{ fontSize: 36, fontWeight: 800, color: COLORS.ink, fontFamily: "ui-monospace, monospace" }}>
-                    {dist < 1000 ? `${Math.round(dist)} ft` : `${(dist / 5280).toFixed(2)} mi`}
-                  </div>
-                  <div style={{ fontSize: 16, color: COLORS.inkSoft }}>
-                    Bearing <strong style={{ color: COLORS.rust }}>{Math.round(brng)}° {compassLabel(brng)}</strong>
-                  </div>
-                </>
-              ) : (
-                <div style={{ color: COLORS.inkSoft, fontSize: 14 }}>Acquiring your location…</div>
-              )}
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 26, fontWeight: 800, color: COLORS.rust, fontFamily: "ui-monospace, monospace" }}>
+                  {brng != null ? Math.round(brng) + "°" : "—"}
+                </div>
+                <div style={{ fontSize: 13, color: COLORS.inkSoft, marginTop: 4 }}>
+                  {brng != null ? compassLabel(brng) : "bearing"}
+                </div>
+              </div>
             </div>
 
-            {/* Compass mode note */}
-            {compassMode === "assumed" && (
-              <div style={{
-                background: "#FBEFD6",
-                border: `1.5px solid ${COLORS.amber}`,
-                borderRadius: 10,
-                padding: "12px 14px",
-                fontSize: 13,
-                color: COLORS.ink,
-                lineHeight: 1.5,
-              }}>
-                <strong>Compass not available — assuming phone points north.</strong> Keep the top of your phone pointed north (use your device Compass app or an analog compass), and the arrow will point true toward the waypoint.
-                <button onClick={requestCompass} style={{
-                  display: "block", marginTop: 8, background: COLORS.amber, color: "#fff",
-                  border: "none", borderRadius: 8, padding: "8px 12px", fontWeight: 700, fontSize: 13,
+            {/* Floating-dot direction ring */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+              <svg width="100%" viewBox="0 0 300 300" style={{ maxWidth: 300 }}>
+                {/* Outer ring */}
+                <circle cx="150" cy="150" r="140" fill={COLORS.bg} stroke={COLORS.line} strokeWidth="2" />
+                {/* Tick marks at cardinal points */}
+                {[0, 90, 180, 270].map((a) => {
+                  const rad = (a * Math.PI) / 180;
+                  const x1 = 150 + 128 * Math.sin(rad);
+                  const y1 = 150 - 128 * Math.cos(rad);
+                  const x2 = 150 + 138 * Math.sin(rad);
+                  const y2 = 150 - 138 * Math.cos(rad);
+                  return <line key={a} x1={x1} y1={y1} x2={x2} y2={y2} stroke={COLORS.inkSoft} strokeWidth="2" />;
+                })}
+                {/* Center hub */}
+                <circle cx="150" cy="150" r="6" fill={COLORS.ink} />
+                {/* Line from center to dot */}
+                {dotX != null && (
+                  <line
+                    x1="150" y1="150"
+                    x2={dotX} y2={dotY}
+                    stroke={COLORS.rust} strokeWidth="2.5"
+                    strokeDasharray="6 4"
+                    style={{ transition: "all 0.25s ease-out" }}
+                  />
+                )}
+                {/* Floating dot on ring edge */}
+                {dotX != null ? (
+                  <circle
+                    cx={dotX} cy={dotY} r="14"
+                    fill={COLORS.rust} stroke="#fff" strokeWidth="3"
+                    style={{ transition: "all 0.25s ease-out" }}
+                  />
+                ) : (
+                  <text x="150" y="155" textAnchor="middle" fill={COLORS.inkSoft} fontSize="13">
+                    Acquiring…
+                  </text>
+                )}
+                {/* Location label inside the dot */}
+                {dotX != null && target && (
+                  <text x={dotX} y={dotY + 4.5} textAnchor="middle" fill="#fff" fontSize="9" fontWeight="bold">
+                    {pad3(target.locationNum)}
+                  </text>
+                )}
+              </svg>
+
+              {/* Compass mode note */}
+              {!compassLive ? (
+                <div style={{
+                  background: "#FBEFD6",
+                  border: `1.5px solid ${COLORS.amber}`,
+                  borderRadius: 10,
+                  padding: "10px 14px",
+                  fontSize: 13,
+                  color: COLORS.ink,
+                  lineHeight: 1.5,
+                  width: "100%",
                 }}>
-                  Try enabling live compass
-                </button>
-              </div>
-            )}
-            {compassMode === "live" && (
-              <div style={{
-                background: "#DCE8D5",
-                border: `1.5px solid #6B8F5C`,
-                borderRadius: 10,
-                padding: "10px 14px",
-                fontSize: 13,
-                color: "#2E4427",
-              }}>
-                ● Live compass active — point your phone and follow the arrow.
-              </div>
-            )}
-            {compassMode === "unknown" && (
-              <button onClick={requestCompass} style={{
-                background: COLORS.card, border: `2px solid ${COLORS.ink}`, borderRadius: 10,
-                padding: "12px", fontWeight: 700, color: COLORS.ink,
-              }}>
-                Enable Compass
-              </button>
-            )}
+                  <strong>Compass not active — assuming phone points north.</strong> Keep the top of your phone pointed north using the Compass app or an analog compass, then the dot indicates the direction to go.
+                </div>
+              ) : (
+                <div style={{
+                  background: "#DCE8D5",
+                  border: `1.5px solid #6B8F5C`,
+                  borderRadius: 10,
+                  padding: "8px 14px",
+                  fontSize: 13,
+                  color: "#2E4427",
+                  width: "100%",
+                }}>
+                  ● Live compass active — turn your phone and follow the dot.
+                </div>
+              )}
+            </div>
           </>
         )}
       </div>
     </div>
   );
 }
-
 // ---------- Map Screen ----------
 function MapScreen({ project, onBack }) {
   const waypoints = project.waypoints;
@@ -2314,7 +2389,9 @@ function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxCo
   const [dwellSecs, setDwellSecs] = useState(project.dwellSeconds || 5);
   const [projectName, setProjectName] = useState(project.name);
   const [addingField, setAddingField] = useState(false);
-  const [dropboxFolder, setDropboxFolder] = useState(project.dropboxParentFolder || "");
+  const [dropboxFolder, setDropboxFolder] = useState(
+    project.dropboxParentFolder || project.name.replace(/[^A-Za-z0-9 _-]/g, "").trim()
+  );
   const [dbxBusy, setDbxBusy] = useState(false);
   const [dbxMessage, setDbxMessage] = useState("");
 
@@ -2327,8 +2404,26 @@ function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxCo
     persistFields(fields.filter((f) => f.id !== id));
   }
 
+  // Creates both DATA and PHOTOS folders — called after connect and after folder name changes.
+  async function ensureProjectFolders(folderName) {
+    const fname = (folderName || dropboxFolder).trim();
+    if (!fname || !dbxGetToken()) return;
+    try {
+      const paths = dbxProjectPaths(fname);
+      await dbxCreateFolder(paths.parent);
+      await dbxCreateFolder(paths.data);
+      await dbxCreateFolder(paths.photos);
+      setDbxMessage("✓ Folders ready: " + paths.parent + "/DATA and " + paths.parent + "/PHOTOS");
+    } catch (e) {
+      setDbxMessage("Folder setup issue: " + e.message);
+    }
+  }
+
   async function connectDropbox() {
-    // Save folder name and where to return after the Dropbox redirect
+    if (!dropboxFolder.trim()) {
+      setDbxMessage("Enter a project folder name before connecting.");
+      return;
+    }
     updateProject({ dropboxParentFolder: dropboxFolder.trim() });
     sessionStorage.setItem("dbx_return", JSON.stringify({ projectId: project.id, view: "settings" }));
     try {
@@ -2343,15 +2438,7 @@ function SettingsScreen({ project, updateProject, onBack, dbxConnected, setDbxCo
     updateProject({ dropboxParentFolder: dropboxFolder.trim() });
     setDbxBusy(true);
     setDbxMessage("");
-    try {
-      const paths = dbxProjectPaths(dropboxFolder.trim());
-      await dbxCreateFolder(paths.parent);
-      await dbxCreateFolder(paths.data);
-      await dbxCreateFolder(paths.photos);
-      setDbxMessage(`Created ${paths.parent} with DATA and PHOTOS subfolders.`);
-    } catch (e) {
-      setDbxMessage("Folder creation failed: " + e.message);
-    }
+    await ensureProjectFolders(dropboxFolder.trim());
     setDbxBusy(false);
   }
 
@@ -2680,6 +2767,7 @@ function ExportScreen({ project, onBack }) {
   const [busy, setBusy] = useState(null);
   const [dbxMsg, setDbxMsg] = useState("");
   const dbxConnected = !!dbxGetToken();
+  const folder = project.dropboxParentFolder;
 
   function download(filename, content, mime) {
     const blob = new Blob([content], { type: mime });
@@ -2693,20 +2781,33 @@ function ExportScreen({ project, onBack }) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  // Upload an export to the project's Dropbox DATA folder (if connected).
+  // Ensures DATA and PHOTOS folders exist, then uploads content to DATA.
   async function deliverToDropbox(filename, content, mime) {
-    if (!dbxConnected) return;
-    const folder = project.dropboxParentFolder;
-    if (!folder) { setDbxMsg("No Dropbox folder set in Project Setup — saved locally only."); return; }
+    if (!dbxConnected) {
+      setDbxMsg("Dropbox not connected — file saved locally only. Connect in Project Setup to also upload.");
+      return;
+    }
+    if (!folder) {
+      setDbxMsg("No project folder set — file saved locally only. Set one in Project Setup.");
+      return;
+    }
     try {
       const paths = dbxProjectPaths(folder);
+      // Always ensure both folders exist before uploading (cheap if already there)
       await dbxCreateFolder(paths.parent);
       await dbxCreateFolder(paths.data);
+      await dbxCreateFolder(paths.photos);
       const blob = new Blob([content], { type: mime });
       await dbxUpload(`${paths.data}/${filename}`, blob);
-      setDbxMsg(`Uploaded to ${paths.data}/${filename}`);
+      setDbxMsg("✓ Uploaded to " + paths.data + "/" + filename);
     } catch (e) {
-      setDbxMsg("Dropbox upload failed (saved locally): " + e.message);
+      const msg = e.message || "";
+      const isAuth = msg.includes("401") || msg.includes("expired");
+      if (isAuth) {
+        setDbxMsg("Dropbox session expired. Go to Project Setup → Disconnect → Reconnect, then export again.");
+      } else {
+        setDbxMsg("Upload failed (saved locally): " + msg.slice(0, 100));
+      }
     }
   }
 
